@@ -18,7 +18,7 @@ import os
 from sklearn.metrics import mean_squared_error, r2_score
 
 
-MODE_FREQUENCY = False
+MODE_FREQUENCY = True
 
 
 def calculate_percentile(respType, percentile=75, p=-1):
@@ -59,28 +59,31 @@ def upsample(data, target, target_i, sampling_limit):
 
 def upsample_bins(data, target, bins):
     sampling_limit = 0
-    for bin in range(bins):
-        min_range = bin * 0.2
-        max_range = (bin + 1) * 0.2
 
-        indices = np.where((target >= min_range) & (target <= max_range))[0]
+    # range of values for each bin
+    ranges = np.arange(0, target.max() + np.finfo(float).eps, target.max() / bins)
+
+    for i in range(1, len(ranges)):
+        indices = np.where((target >= ranges[i-1]) & (target <= ranges[i]))[0]
         if len(indices) > sampling_limit:
             sampling_limit = len(indices)
 
-    for bin in range(bins):
-        min_range = bin * 0.2
-        max_range = (bin + 1) * 0.2
+    for i in range(1, len(ranges)):
+        indices = np.where((target >= ranges[i-1]) & (target <= ranges[i]))[0]
 
-        indices = np.where((target >= min_range) & (target <= max_range))[0]
+        if len(indices):
+            data_to_replicate = data[indices]
+            target_to_replicate = target[indices]
 
-        data_to_replicate = data[indices]
-        target_to_replicate = target[indices]
+            for _ in range(int(sampling_limit / len(indices))):
+                data = np.concatenate((data, data_to_replicate))
+                target = np.concatenate((target, target_to_replicate))
+        else:
+            # no data belonging to this bin range
+            print('No data in bin ', ranges[i-1], ranges[i])
+            pass
 
-        for _ in range(int(sampling_limit / len(indices))):
-            data = np.concatenate((data, data_to_replicate))
-            target = np.concatenate((target, target_to_replicate))
-
-        indices_to_keep = np.concatenate((np.where((target >= min_range) & (target <= max_range))[0][:sampling_limit], np.where((target < min_range) | (target > max_range))[0]))
+        indices_to_keep = np.concatenate((np.where((target >= ranges[i-1]) & (target <= ranges[i]))[0][:sampling_limit], np.where((target < ranges[i-1]) | (target > ranges[i]))[0]))
 
         data = data[indices_to_keep]
         target = target[indices_to_keep]
@@ -131,6 +134,10 @@ def augment_dataset_fft(data, target):
 
 
 def augment_dataset_shifting(data, target, percentile, interval_range, interval, data_range, data_avg_points):
+
+    # TODO:
+    CLIP_NEGATIVE = True
+
     intervals = [i for i in range(interval_range[0], interval_range[1] + interval, interval)]
     new_data = []
     new_target = []
@@ -143,7 +150,8 @@ def augment_dataset_shifting(data, target, percentile, interval_range, interval,
                     R_avg = np.mean(R.reshape(-1, data_avg_points), axis=1)
 
                     # Change range of data to be non-negative (>= 0)
-                    R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
+                    if CLIP_NEGATIVE:
+                        R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
 
                     trialData.append(R_avg)
                 new_data.append(trialData)
@@ -155,7 +163,8 @@ def augment_dataset_shifting(data, target, percentile, interval_range, interval,
                 R_avg = np.mean(R.reshape(-1, data_avg_points), axis=1)
 
                 # Change range of data to be non-negative (>= 0)
-                R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
+                if CLIP_NEGATIVE:
+                    R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
 
                 trialData.append(R_avg)
 
@@ -208,13 +217,14 @@ def load_hyperparameters(results_path, run_id):
     L3_units = int(model_params[2][2:])
     L4_units = 0
 
-    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, regions_to_use
+    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, regions_to_use#, row['NPERSEG'][0], row['NOVERLAP'][0]
 
 
 def get_best_model(results_svr_path):
     df = pd.read_csv(results_svr_path)
     df.sort_values(by=['Accuracy 1 STDDEV'], ascending=False, inplace=True)
-    run_id = int(df.iloc[0]['Run ID'])
+    # run_id = int(df.iloc[0]['Run ID'])
+    run_id = int(df.iloc[1]['Run ID']) # TODO::::::::::::::::::::::::::::::::::::::::;
     return run_id
 
 
@@ -440,6 +450,9 @@ def create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_
         model.add(Conv2D(L1_units, padding='valid', kernel_size=(1, input_shape[1] // 5), dilation_rate=2, activation='relu', input_shape=input_shape))
         model.add(Conv2D(L2_units, padding='valid', kernel_size=(input_shape[0], 10), dilation_rate=1, activation='relu'))
 
+        # model.add(Conv2D(L1_units, padding='valid', kernel_size=(input_shape[0], input_shape[1] // 5), activation='relu', input_shape=input_shape))
+        # model.add(Conv2D(L2_units, padding='valid', kernel_size=(1, input_shape[1] // 5), activation='relu'))
+
     else:
         from keras.layers import Conv3D, TimeDistributed
         model.add(Conv3D(L1_units, padding='valid', kernel_size=(1, 3, 3), activation='relu', input_shape=input_shape))
@@ -463,11 +476,12 @@ def create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_
 
     model.add(Dropout(dropout_rate))
     model.add(Dense(num_classes, activation=activation_function))
+    # model.add(Dense(num_classes, activation='relu')) # TODO <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     return model, model_name
 
 
-def plot_gradcams(model, testData, preds, targets, step, path_to_save):
+def plot_gradcams(model, testData, preds, targets, step, path_to_save,             orig_test_data, xmean, xstd):
 
     if MODE_FREQUENCY:
         penultimate_layer_idx = utils.find_layer_idx(model, "conv3d_1")
@@ -484,38 +498,112 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save):
 
         for i in range(indices.shape[0]):
 
-            try:
-                attn_map = visualize_cam(model, layer_idx=-1, filter_indices=None, seed_input=testData[indices[i]],
-                                         penultimate_layer_idx=penultimate_layer_idx, backprop_modifier=None,
-                                         grad_modifier=None)
-                img = np.squeeze(testData[indices[i]])
+            attn_map = visualize_cam(model, layer_idx=-1, filter_indices=None, seed_input=testData[indices[i]],
+                                     penultimate_layer_idx=penultimate_layer_idx, backprop_modifier=None,
+                                     grad_modifier=None)
+            img = np.squeeze(testData[indices[i]])
 
+            if MODE_FREQUENCY:
+                from scipy import signal
 
-                if MODE_FREQUENCY:
-                    from scipy import signal
+                # TODO:
+                img = signal.istft(img * xstd + xmean, 2048)[1][:, :10000]
+                # NOTE: scaling or not scaling basically has same output
+                attn_map_inverted = signal.istft(attn_map * xstd + xmean, 2048)[1][:, :10000]
 
-                    img = signal.istft(img, 2048)[1]
-                    attn_map = signal.istft(attn_map, 2048)[1]
+                from sklearn.preprocessing import MinMaxScaler
+                attn_map_inverted = MinMaxScaler().fit_transform(attn_map_inverted.T).T
 
-                    img = signal.resample(img, 4500, axis=1)
-                    attn_map = signal.resample(attn_map, 4500, axis=1)
+                # img = signal.resample(img, 4500, axis=1)
+                # attn_map_inverted = signal.resample(attn_map_inverted, 4500, axis=1)
 
-                    '''
-                    inverted = signal.istft(attn_map, 2048)[1]
-                    upsampled = signal.resample(inverted, 4500, axis=1)
-                    attn_map = upsampled # back to signal form
-                    '''
+                '''
+                inverted = signal.istft(attn_map, 2048)[1]
+                upsampled = signal.resample(inverted, 4500, axis=1)
+                attn_map = upsampled # back to signal form
+                '''
+
+                plt.close('all')
+
+                num_contacts = img.shape[0]
+                # for plotting. we will put all contacts in one plot
+                num_rows = np.ceil(num_contacts / 2).astype(int)
+                num_cols = 2
+
+                # TODO: EXPERIMENTAL STUFF
+                # plotting the current raw CAMs (all its contacts)
+                fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
+                axes = axes.flatten()
+                for contact_ind in range(num_contacts):
+                    axes[contact_ind].set_title(f'Contact {contact_ind}')
+                    axes[contact_ind].axis('off')
+                    axes[contact_ind].imshow(attn_map[contact_ind])
+                fig.savefig(
+                    os.path.join(path_to_save, 'attn_maps', 'test_b{}_CAM_{}_{}.png'.format(step, category, i)), dpi=300
+                )
+
+                # plotting the inverted frequency CAMs back to signal
+                fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
+                axes = axes.flatten()
+                for contact_ind in range(num_contacts):
+                    axes[contact_ind].set_title(f'Contact {contact_ind}')
+                    axes[contact_ind].plot(attn_map_inverted[contact_ind])
+                fig.savefig(
+                    os.path.join(path_to_save, 'attn_maps', 'test_b{}_INVERTED_FREQ_CAM_{}_{}.png'.format(step, category, i)), dpi=300
+                )
+
+                # plotting the inverted frequency back to signal
+                fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
+                axes = axes.flatten()
+                for contact_ind in range(num_contacts):
+                    axes[contact_ind].set_title(f'Contact {contact_ind}')
+                    axes[contact_ind].plot(img[contact_ind])
+                fig.savefig(
+                    os.path.join(path_to_save, 'attn_maps', 'test_b{}_INVERTED_FREQ_{}_{}.png'.format(step, category, i)), dpi=300
+                )
+
+                # how the original test signal looks like
+                fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
+                axes = axes.flatten()
+                for contact_ind in range(num_contacts):
+                    axes[contact_ind].set_title(f'Contact {contact_ind}')
+                    axes[contact_ind].plot(orig_test_data[indices[i]][contact_ind])
+                fig.savefig(
+                    os.path.join(path_to_save, 'attn_maps', 'test_b{}_ORIG_SIGNAL_{}_{}.png'.format(step, category, i)), dpi=300
+                )
+
+                # overlay CAM
+                # from sklearn.preprocessing import MinMaxScaler
+                # temp = MinMaxScaler().fit_transform(attn_map_inverted.T).T
+
+                temp = np.abs(attn_map_inverted)
+
+                attn_map_colors = plt.cm.get_cmap('jet')(temp)[:, :, :-1]
+                fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
+                axes = axes.flatten()
+                for contact_ind in range(num_contacts):
+                    axes[contact_ind].set_title(f'Contact {contact_ind}')
+                    axes[contact_ind].plot(img[contact_ind])
+                    for ind in range(len(attn_map_inverted[contact_ind])):
+                        # axes[contact_ind].axvline(ind, 0, 1, alpha=0.2, color=attn_map_colors[contact_ind, ind])
+                        axes[contact_ind].axvline(ind, 0, 1, alpha=0.01, color=attn_map_colors[contact_ind, ind])
+                fig.savefig(
+                    os.path.join(path_to_save, 'attn_maps', 'test_b{}_INVERTED_FREQ_CAM_ON_INVERTED_FREQ_{}_{}.png'.format(step, category, i)), dpi=300
+                )
+
+            else:
 
                 # EEG plot as a 2d image
                 if 0:
+                    plt.close('all')
                     fig = plt.figure(figsize=(180, 6))
                     plt.imshow(img, cmap='gray')
                     plt.savefig(os.path.join(path_to_save, 'attn_maps', 'test_b{}_raw_{}_{}.png'.format(step, category, i)))
-                    plt.close('all')
 
                 # EEG plot for each contact
                 if 0:
                     for contact_ind in range(testData.shape[1]):
+                        plt.close('all')
                         fig, ax = plt.subplots()
                         ax.plot(img[contact_ind])
                         fig.savefig(
@@ -524,16 +612,17 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save):
 
                 # ATTN MAP OUTPUT AS A 2D IMAGE
                 if 0:
+                    plt.close('all')
                     fig = plt.figure(figsize=(180, 6))
                     plt.imshow(img, cmap='gray')
                     attn_map_img = plt.imshow(attn_map, cmap="jet", alpha=0.8)
                     fig.colorbar(attn_map_img)
                     plt.savefig(os.path.join(path_to_save, 'attn_maps', 'test_b{}_gc_{}_{}.png'.format(step, category, i)))
-                    plt.close('all')
 
                 # ATTN MAP OUTPUT OVER EACH EEG PLOT
                 attn_map_colors = plt.cm.get_cmap('jet')(attn_map)[:, :, :-1]
                 for contact_ind in range(testData.shape[1]):
+                    plt.close('all')
                     fig, ax = plt.subplots()
                     ax.plot(img[contact_ind])
                     for ind in range(len(attn_map[contact_ind])):
@@ -542,14 +631,12 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save):
                         os.path.join(path_to_save, 'attn_maps', 'test_b{}_gc_{}_{}_c{}.png'.format(step, category, i, contact_ind))
                     )
 
-            except Exception as e:
-                print(e)
-                continue
 
 def plot_loss_graphs(dataset, run_id, step, path_to_save):
     training_loss = dataset['loss']
     validation_loss = dataset['val_loss']
 
+    plt.close('all')
     plt.plot(training_loss, '-b', label='training')
     plt.plot(validation_loss, '-g', label='validation')
 
@@ -558,8 +645,6 @@ def plot_loss_graphs(dataset, run_id, step, path_to_save):
     plt.ylabel('loss')
 
     plt.savefig(os.path.join(path_to_save, 'losses', 'loss_{}_{}.jpg'.format(run_id, step)), dpi=500)
-    plt.clf()
-    plt.cla()
 
 
 def normalize_output(Y):
@@ -621,6 +706,7 @@ def plot_svr_plot(target, classification, accuracy_window, title, run_id, path_t
             x2.append(target[i])
             y2.append(classification[i])
 
+    plt.close('all')
     fig7, ax7 = plt.subplots(1, 1, figsize=(10, 10))
 
     if accuracy_window == 0.0:
@@ -680,6 +766,7 @@ def plot_box_plot(target, classification, p, title, run_id, path_to_save):
             x2.append(target[i])
             y2.append(classification[i])
 
+    plt.close('all')
     fig7, ax7 = plt.subplots(1, 1, figsize=(10, 10))
 
     ax7.scatter(x=x1, y=y1, c='g', alpha=0.5)
