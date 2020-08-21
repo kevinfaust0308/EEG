@@ -481,7 +481,7 @@ def create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_
     return model, model_name
 
 
-def plot_gradcams(model, testData, preds, targets, step, path_to_save,             orig_test_data, xmean, xstd):
+def plot_gradcams(model, testData, preds, targets, step, path_to_save, xmean, xstd, attn_map_cutoff=0.7):
 
     if MODE_FREQUENCY:
         penultimate_layer_idx = utils.find_layer_idx(model, "conv3d_1")
@@ -505,13 +505,15 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save,          
 
             if MODE_FREQUENCY:
                 from scipy import signal
+                from sklearn.preprocessing import MinMaxScaler
 
                 # TODO:
+                raise Exception('On best run, type in the nperseg and noverlap params below and then comment out this exception.')
+
                 img = signal.istft(img * xstd + xmean, 2048)[1][:, :10000]
-                # NOTE: scaling or not scaling basically has same output
+                # NOTE: scaling or not scaling results in same shape. and then when we scale 0-1, they will be indentical
                 attn_map_inverted = signal.istft(attn_map * xstd + xmean, 2048)[1][:, :10000]
 
-                from sklearn.preprocessing import MinMaxScaler
                 attn_map_inverted = MinMaxScaler().fit_transform(attn_map_inverted.T).T
 
                 # img = signal.resample(img, 4500, axis=1)
@@ -542,17 +544,18 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save,          
                     os.path.join(path_to_save, 'attn_maps', 'test_b{}_CAM_{}_{}.png'.format(step, category, i)), dpi=300
                 )
 
-                # plotting the inverted frequency CAMs back to signal
+                # plotting the frequency CAMs back to signal
                 fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
                 axes = axes.flatten()
                 for contact_ind in range(num_contacts):
                     axes[contact_ind].set_title(f'Contact {contact_ind}')
+                    axes[contact_ind].axhline(attn_map_cutoff, 0, 1, color='r')
                     axes[contact_ind].plot(attn_map_inverted[contact_ind])
                 fig.savefig(
                     os.path.join(path_to_save, 'attn_maps', 'test_b{}_INVERTED_FREQ_CAM_{}_{}.png'.format(step, category, i)), dpi=300
                 )
 
-                # plotting the inverted frequency back to signal
+                # plotting the frequency eeg data back to signal
                 fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
                 axes = axes.flatten()
                 for contact_ind in range(num_contacts):
@@ -563,28 +566,25 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save,          
                 )
 
                 # how the original test signal looks like
-                fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
-                axes = axes.flatten()
-                for contact_ind in range(num_contacts):
-                    axes[contact_ind].set_title(f'Contact {contact_ind}')
-                    axes[contact_ind].plot(orig_test_data[indices[i]][contact_ind])
-                fig.savefig(
-                    os.path.join(path_to_save, 'attn_maps', 'test_b{}_ORIG_SIGNAL_{}_{}.png'.format(step, category, i)), dpi=300
-                )
+                # fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
+                # axes = axes.flatten()
+                # for contact_ind in range(num_contacts):
+                #     axes[contact_ind].set_title(f'Contact {contact_ind}')
+                #     axes[contact_ind].plot(orig_test_data[indices[i]][contact_ind])
+                # fig.savefig(
+                #     os.path.join(path_to_save, 'attn_maps', 'test_b{}_ORIG_SIGNAL_{}_{}.png'.format(step, category, i)), dpi=300
+                # )
 
                 # overlay CAM
-                # from sklearn.preprocessing import MinMaxScaler
-                # temp = MinMaxScaler().fit_transform(attn_map_inverted.T).T
+                attn_map_inverted_clipped = np.where(attn_map_inverted >= attn_map_cutoff, attn_map_inverted, 0)
 
-                temp = np.abs(attn_map_inverted)
-
-                attn_map_colors = plt.cm.get_cmap('jet')(temp)[:, :, :-1]
+                attn_map_colors = plt.cm.get_cmap('jet')(attn_map_inverted_clipped)[:, :, :-1]
                 fig, axes = plt.subplots(num_rows, num_cols, tight_layout=True)
                 axes = axes.flatten()
                 for contact_ind in range(num_contacts):
                     axes[contact_ind].set_title(f'Contact {contact_ind}')
                     axes[contact_ind].plot(img[contact_ind])
-                    for ind in range(len(attn_map_inverted[contact_ind])):
+                    for ind in range(len(attn_map_inverted_clipped[contact_ind])):
                         # axes[contact_ind].axvline(ind, 0, 1, alpha=0.2, color=attn_map_colors[contact_ind, ind])
                         axes[contact_ind].axvline(ind, 0, 1, alpha=0.01, color=attn_map_colors[contact_ind, ind])
                 fig.savefig(

@@ -27,6 +27,7 @@ import socket
 import csv
 import sys
 import pathlib
+from scipy import signal
 
 from scripts.utils import *
 
@@ -56,7 +57,7 @@ except:
     # local debugging parameters
     run_id = 1
     filename = 'SEEG-SK-04'
-    is_final_run = 1
+    is_final_run = 0
 
 path_to_load = os.path.join(path, 'data', filename, 'processed')
 path_to_save = os.path.join(path, 'results', filename)
@@ -75,6 +76,10 @@ else:
 max_regions_limit = 2  # Upper limit of how many regions to select for run
 final_run = int(is_final_run)  # If 0, then validate against validation datset. If 1, search through logs to find best-performing model, load those hyperparameters for training, then test on test dataset
 
+# whether to cap the frequency data. None means don't
+fs_cap = 100
+fs_cap = None
+
 for dir in ['plots', 'losses', 'attn_maps']:
     pathlib.Path(os.path.join(path_to_save, dir)).mkdir(parents=True, exist_ok=True)
 
@@ -85,80 +90,8 @@ for dir in ['plots', 'losses', 'attn_maps']:
 [X_full1, _], respTimes, num_regions, top_regions, top_region_indices = load_data(path_to_load)
 
 Y, y_min, y_max = normalize_output(respTimes)
-# respTimes[respTimes >= 1.5] = 1.5
-# Y = respTimes
 
-if 0:
-    # NOTE: see how data spectogram looks like at different response time groups
-    from scipy import signal
-
-    def get_spectrogram(data, fs, nperseg=100, noverlap=50, fs_cap=None):
-        f, t, Sxx = signal.spectrogram(data, fs)  # , nperseg=nperseg, noverlap=noverlap)
-        fs_ind = None
-        if fs_cap is not None:
-            fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) - 1
-            # print('max frequency:', f[fs_ind])
-        # print(f.shape)
-        # print(t.shape)
-        # print(Sxx.shape)
-        return f[:fs_ind], t, Sxx[:, :, :fs_ind, :]
-
-
-    # f, t, dats = get_spectrogram(X_full1, 2048, fs_cap=100)
-
-    f, t, dats = signal.spectrogram(X_full1, 2048)
-
-
-    # NOTE: making a spectogram plot for each of the contacts (trials are averaged)
-    ranges = np.arange(0, Y.max() + np.finfo(float).eps, Y.max() / 5)
-    for i in range(1, len(ranges)):
-
-        temp = dats[(ranges[i-1] <= Y) & (Y <= ranges[i])].mean(axis=0)
-        for contact_i in range(len(temp)):
-            plt.pcolormesh(t, f, temp[contact_i], cmap='Greys')
-            plt.ylabel('Frequency (Hz)')
-            plt.xlabel('Time (s)')
-            # plt.show()
-            sp = r'Z:\tempytempyeeg\results\SEEG-SK-04\specto_on_raw_dat_c{}_{:.2f}_to_{:.2f}.jpg'
-            plt.savefig(sp.format(contact_i, ranges[i-1], ranges[i]))
-
-    # NOTE: using log scaling so that colormap is actually visible
-    loggeddats = 10 * np.log10(dats)
-    for i in range(1, len(ranges)):
-        temp = loggeddats[(ranges[i-1] <= Y) & (Y <= ranges[i])].mean(axis=0)
-        contact_i = 0
-        plt.close('all')
-        mesh = plt.pcolormesh(t, f, temp[contact_i], cmap='Greys')
-        plt.colorbar(mesh)
-        plt.ylabel('Frequency (Hz)')
-        plt.xlabel('Time (s)')
-        # plt.show()
-        sp = r'Z:\tempytempyeeg\results\SEEG-SK-04\TEMPYspecto_on_raw_dat_c{}_{:.2f}_to_{:.2f}.jpg'
-        plt.savefig(sp.format(contact_i, ranges[i-1], ranges[i]))
-
-
-
-    # for making data 100-4600 and average over every 5
-    avgd_dats = np.mean(X_full1[:, :, 100:4600].reshape((365, 95, 900, 5)), axis=-1)
-    f, t, avgd_dats = get_spectrogram(avgd_dats, 2048, fs_cap=100)
-
-    ranges = np.arange(0, Y.max() + np.finfo(float).eps, Y.max() / 5)
-    for i in range(1, len(ranges)):
-
-        temp = avgd_dats[(ranges[i-1] <= Y) & (Y <= ranges[i])].mean(axis=0)
-        for contact_i in range(len(temp)):
-            plt.pcolormesh(t, f, temp[contact_i], cmap='Greys')
-            plt.ylabel('Frequency (Hz)')
-            plt.xlabel('Time (s)')
-            # plt.show()
-            sp = r'Z:\tempytempyeeg\results\SEEG-SK-04\specto_5avg_dat_c{}_{:.2f}_to_{:.2f}.jpg'
-            plt.savefig(sp.format(contact_i, ranges[i-1], ranges[i]))
-
-
-
-
-for run_id in range(1, 500):
-# for run_id in range(100, 500):
+for run_id in range(1, 1000):
 
     region_nums_to_use = []
 
@@ -180,15 +113,10 @@ for run_id in range(1, 500):
 
         region_nums_to_use = None
 
-
-        # TODO:
-        NPERSEG_RANDOM = random.choice([128, 256, 512, 1024, 2048])
-        NOVERLAP_RANDOM = random.choice([NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8])
-
-    NPERSEG_RANDOM = 256
-    NOVERLAP_RANDOM = NPERSEG_RANDOM // 8
-    NOVERLAP_RANDOM = NPERSEG_RANDOM // 2
-
+        # TODO: default is 256 and 256//2
+        NPERSEG_RANDOM = random.choice([64, 128, 256, 512, 1024])
+        # NOVERLAP_RANDOM = random.choice([NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8])
+        NOVERLAP_RANDOM = NPERSEG_RANDOM // 2
 
     [X_full], regions_to_use, num_graphs, region_nums_to_use, indices_to_use = select_regions(num_regions, max_regions_limit, top_regions, top_region_indices, data=[X_full1], region_nums_to_use=region_nums_to_use)
 
@@ -235,12 +163,23 @@ for run_id in range(1, 500):
 
         ### TODO:
         if MODE_FREQUENCY:
-            from scipy import signal
+
+            # # NOTE: a check for testing which combinations would work for inverting...result: all the /4 and /8 fail
+            # NPERSEG_RANDOMS = [128, 256, 512, 1024, 2048]
+            # # NOVERLAP_RANDOMS = [NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8]
+            # for NPERSEG_RANDOM in NPERSEG_RANDOMS:
+            #     for NOVERLAP_RANDOM in [NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8]:
+            #         try:
+            #             _, _, temp = signal.stft(trainData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+            #             signal.istft(temp, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+            #         except:
+            #             print('FAILED NOLA: ', NPERSEG_RANDOM, NOVERLAP_RANDOM, NPERSEG_RANDOM / NOVERLAP_RANDOM)
+
+
+
 
 
             f, t, trainDataSTFT = signal.stft(trainData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-            fs_cap = 100
-            fs_cap = None
             fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
             trainDataSTFT = trainDataSTFT[:, :, :fs_ind, :]
 
@@ -289,17 +228,12 @@ for run_id in range(1, 500):
 
             # TODO:
             if MODE_FREQUENCY:
-                # _, _, validDataSPECTO = get_spectrogram(validData, 2048, fs_cap=100)
 
-                f, t, validDataSTFT = signal.stft(validData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-                fs_cap = 100
-                fs_ind = next(i for i, res in enumerate(f > fs_cap) if res)
-                validDataSTFTFreqTrimmed = validDataSTFT[:, :, :fs_ind, :]
+                f, t, validDataFreq = signal.stft(validData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+                fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
+                validDataFreq = validDataFreq[:, :, :fs_ind, :]
 
-
-                # validData = validDataSTFT
-                validData = validDataSTFTFreqTrimmed
-                # validData = validDataSPECTO
+                validData = validDataFreq
                 # validData = 10 * np.log10(signal.spectrogram(validData, 2048))
 
             ###
@@ -313,7 +247,7 @@ for run_id in range(1, 500):
 
             history = model.fit(x=trainData, y=trainTarget, validation_data=(validData, validTarget),
                                 # batch_size=trainData.shape[0] // batch_size_div, epochs=epochs,
-                                batch_size=128, epochs=epochs,
+                                batch_size=64, epochs=epochs,
                                 callbacks=[early_stopping_monitor], verbose=1)
 
             # Plot loss outputs
@@ -327,30 +261,19 @@ for run_id in range(1, 500):
         else:
 
             # history = model.fit(x=trainData, y=trainTarget, batch_size=trainData.shape[0] // batch_size_div, epochs=epochs[step], verbose=1)
-            # history = model.fit(x=trainData, y=trainTarget, batch_size=128, epochs=epochs[step], verbose=1)
+            history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=epochs[step], verbose=1)
 
-            model = keras.models.load_model(r'Z:\tempytempyeeg\results\SEEG-SK-04\STFT_notrim.h5')
-            # model = keras.models.load_model(r'Z:\tempytempyeeg\results\SEEG-SK-04\time_domain_model.h5')
-
-
-            orig_test_data = testData
+            # model = keras.models.load_model(r'Z:\tempytempyeeg\results\SEEG-SK-04\STFT_notrim.h5')
 
 
             # TODO:
             if MODE_FREQUENCY:
-                # _, _, testDataSPECTO = get_spectrogram(testData, 2048, fs_cap=100)
 
-                f, t, testDataSTFT = signal.stft(testData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-                fs_cap = 100
-                fs_cap = None
+                f, t, testDataFreq = signal.stft(testData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
                 fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
-                testDataSTFTFreqTrimmed = testDataSTFT[:, :, :fs_ind, :]
+                testDataFreq = testDataFreq[:, :, :fs_ind, :]
 
-
-
-                # testData = testDataSTFT
-                testData = testDataSTFTFreqTrimmed
-                # testData = testDataSPECTO
+                testData = testDataFreq
                 # testData = 10 * np.log10(signal.spectrogram(testData, 2048)[2])
 
             ###
@@ -364,9 +287,6 @@ for run_id in range(1, 500):
             target_to_predict = testTarget
 
 
-
-
-
         # Log outputs and losses
         pred = model.predict(data_to_predict).reshape(-1)
         print(str(step + 1) + ": MSE:     " + str(round(mean_squared_error(target_to_predict, pred), 5)))
@@ -377,9 +297,9 @@ for run_id in range(1, 500):
 
         # Plot GRAD-CAMS if looking at test dataset
         PLOT_GRAD_CAM = True
-        # if final_run:
-        if PLOT_GRAD_CAM:
-            plot_gradcams(model, testData, pred, target_to_predict, step, path_to_save,        orig_test_data, train_X_mean, train_X_std)
+        if final_run:
+        # if PLOT_GRAD_CAM:
+            plot_gradcams(model, testData, pred, target_to_predict, step, path_to_save, train_X_mean, train_X_std)
 
         if not final_run:
             del validData, validTarget
@@ -478,9 +398,8 @@ for run_id in range(1, 500):
             ]
             writer.writerow(data)
 
-    else:
-
-        # Using the best run parameters, train using all the data to create a final model
+    # Using the best run parameters, train using all the data to create a final model
+    if final_run:
 
         trainData, trainTarget, trainTarget_p, \
         _, _, \
