@@ -91,346 +91,343 @@ for dir in ['plots', 'losses', 'attn_maps']:
 
 Y, y_min, y_max = normalize_output(respTimes)
 
-for run_id in range(1, 1000):
 
-    region_nums_to_use = []
+region_nums_to_use = []
 
-    if final_run:
-        run_id = get_best_model(os.path.join(path_to_save, 'regression_results_topn_svrs.csv'))
-        print(run_id)
-        print("Loading hyperparameters from best model...")
-        percentile, model_num, learning_rate, dropout_rate, epochs, loss, _, L1_units, L2_units, L3_units, L4_units, regions_to_use = \
-            load_hyperparameters(os.path.join(path_to_save, 'regression_results_topn.csv'), run_id)
+if final_run:
+    run_id = get_best_model(os.path.join(path_to_save, 'regression_results_topn_svrs.csv'))
+    print(run_id)
+    print("Loading hyperparameters from best model...")
+    percentile, model_num, learning_rate, dropout_rate, epochs, loss, _, L1_units, L2_units, L3_units, L4_units, regions_to_use = \
+        load_hyperparameters(os.path.join(path_to_save, 'regression_results_topn.csv'), run_id)
 
-        for region in regions_to_use:
-            region_nums_to_use.append(np.where(top_regions == region)[0].tolist()[0])
+    for region in regions_to_use:
+        region_nums_to_use.append(np.where(top_regions == region)[0].tolist()[0])
 
-        run_id *= 1000
+    run_id *= 1000
 
-    else:
-        percentile, model_num, learning_rate, dropout_rate, epochs, loss, _, L1_units, L2_units, L3_units, L4_units = \
-            generate_hyperparameters()
+else:
+    percentile, model_num, learning_rate, dropout_rate, epochs, loss, _, L1_units, L2_units, L3_units, L4_units = \
+        generate_hyperparameters()
 
-        region_nums_to_use = None
+    region_nums_to_use = None
 
-        # TODO: default is 256 and 256//2
-        NPERSEG_RANDOM = random.choice([64, 128, 256, 512, 1024])
-        # NOVERLAP_RANDOM = random.choice([NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8])
-        NOVERLAP_RANDOM = NPERSEG_RANDOM // 2
+    # TODO: default is 256 and 256//2
+    NPERSEG_RANDOM = random.choice([64, 128, 256, 512, 1024])
+    # NOVERLAP_RANDOM = random.choice([NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8])
+    NOVERLAP_RANDOM = NPERSEG_RANDOM // 2
 
-    [X_full], regions_to_use, num_graphs, region_nums_to_use, indices_to_use = select_regions(num_regions, max_regions_limit, top_regions, top_region_indices, data=[X_full1], region_nums_to_use=region_nums_to_use)
+[X_full], regions_to_use, num_graphs, region_nums_to_use, indices_to_use = select_regions(num_regions, max_regions_limit, top_regions, top_region_indices, data=[X_full1], region_nums_to_use=region_nums_to_use)
 
-    if final_run:
-        epochs[0] = epochs[1] = epochs[2] = epochs[3] = epochs[4] = int(np.mean(epochs))
+if final_run:
+    epochs[0] = epochs[1] = epochs[2] = epochs[3] = epochs[4] = int(np.mean(epochs))
 
-    print('hyperparameters used:')
-    print('percentile: ' + str(percentile))
-    print('learning rate: ' + str(learning_rate))
-    print('dropout rate: ' + str(dropout_rate))
-    print('epochs: ' + str(epochs))
-    print('loss: ' + str(loss))
-    print('L1, L2, L3 : ' + str(L1_units) + ', ' + str(L2_units) + ', ' + str(L3_units))
+print('hyperparameters used:')
+print('percentile: ' + str(percentile))
+print('learning rate: ' + str(learning_rate))
+print('dropout rate: ' + str(dropout_rate))
+print('epochs: ' + str(epochs))
+print('loss: ' + str(loss))
+print('L1, L2, L3 : ' + str(L1_units) + ', ' + str(L2_units) + ', ' + str(L3_units))
 
-    print(top_region_indices)
-    print(region_nums_to_use)
-    print(indices_to_use)
-    print(regions_to_use)
-    print(X_full.shape)
-    print(Y.shape)
-    print(respTimes.shape)
+print(top_region_indices)
+print(region_nums_to_use)
+print(indices_to_use)
+print(regions_to_use)
+print(X_full.shape)
+print(Y.shape)
+print(respTimes.shape)
 
-    epochs_es = []
-    targets = []
-    preds = []
-    mses = []
+epochs_es = []
+targets = []
+preds = []
+mses = []
 
-    preds_train = []
-    targets_train = []
+preds_train = []
+targets_train = []
 
-    B = int(round(X_full.shape[0] / num_batches))
-    for step in range(0, num_batches):
+B = int(round(X_full.shape[0] / num_batches))
+for step in range(0, num_batches):
 
-        trainData, trainTarget, trainTarget_p, \
-        validData, validTarget, \
-        testData, testTarget = \
-            calculate_batch(X_full, Y, B, step, num_batches, data_range, data_avg_points, percentile, validation=not final_run, test=True)
+    trainData, trainTarget, trainTarget_p, \
+    validData, validTarget, \
+    testData, testTarget = \
+        calculate_batch(X_full, Y, B, step, num_batches, data_range, data_avg_points, percentile, validation=not final_run, test=True)
 
-        # Augment training dataset
-        trainData, trainTarget = augment_dataset(trainData, trainTarget, trainTarget_p, data_range, data_avg_points)
+    # Augment training dataset
+    trainData, trainTarget = augment_dataset(trainData, trainTarget, trainTarget_p, data_range, data_avg_points)
 
-        # Upsample each bin in training dataset to get an even-distribution across bins
-        trainData, trainTarget = upsample_bins(trainData, trainTarget, num_batches)
+    # Upsample each bin in training dataset to get an even-distribution across bins
+    trainData, trainTarget = upsample_bins(trainData, trainTarget, num_batches)
 
-        ### TODO:
+    ### TODO:
+    if MODE_FREQUENCY:
+
+        # # NOTE: a check for testing which combinations would work for inverting...result: all the /4 and /8 fail
+        # NPERSEG_RANDOMS = [128, 256, 512, 1024, 2048]
+        # # NOVERLAP_RANDOMS = [NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8]
+        # for NPERSEG_RANDOM in NPERSEG_RANDOMS:
+        #     for NOVERLAP_RANDOM in [NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8]:
+        #         try:
+        #             _, _, temp = signal.stft(trainData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+        #             signal.istft(temp, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+        #         except:
+        #             print('FAILED NOLA: ', NPERSEG_RANDOM, NOVERLAP_RANDOM, NPERSEG_RANDOM / NOVERLAP_RANDOM)
+
+
+
+
+
+        f, t, trainDataSTFT = signal.stft(trainData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+        fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
+        trainDataSTFT = trainDataSTFT[:, :, :fs_ind, :]
+
+        if 0:
+            trainDataISTFT = signal.istft(trainDataSTFT, 2048)  # we only using up to 100 frequency so its not a pure reconstruct but very similar
+
+            # example of reverted back to signal
+            plt.plot(trainDataISTFT[1][0][0])
+            plt.show()
+
+            upsampled = signal.resample(trainDataISTFT[1][0][0], 4500)
+            plt.plot(upsampled)
+            plt.show()
+
+            import cv2
+            resized = cv2.resize(reversee[1][0][0], (4500,1))
+            plt.plot(resized[0])
+            plt.show()
+
+        trainData = trainDataSTFT
+        # trainData = 10 * np.log10(signal.spectrogram(trainData, 2048)[2])
+
+
+    ###
+
+    # Standardize the dataset
+    train_X_mean = np.mean(trainData)
+    train_X_std = np.std(trainData)
+    trainData -= train_X_mean
+    trainData /= train_X_std
+    trainData = np.expand_dims(trainData, axis=-1)
+
+    print('train data shape:', trainData.shape)
+
+    input_shape = trainData.shape[1:]
+    model, model_name = create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_units, activation_function='sigmoid')
+
+    # NOTE: Initial weight file is in root directory for now
+    # model.load_weights(os.path.join(path, 'init_weights.h5'))
+
+    opt = keras.optimizers.RMSprop(lr=learning_rate)
+    model.compile(loss=loss, optimizer=opt)
+
+    if not final_run:
+        # Find the hyperparameters which perform best on validation data
+
+        # TODO:
         if MODE_FREQUENCY:
 
-            # # NOTE: a check for testing which combinations would work for inverting...result: all the /4 and /8 fail
-            # NPERSEG_RANDOMS = [128, 256, 512, 1024, 2048]
-            # # NOVERLAP_RANDOMS = [NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8]
-            # for NPERSEG_RANDOM in NPERSEG_RANDOMS:
-            #     for NOVERLAP_RANDOM in [NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8]:
-            #         try:
-            #             _, _, temp = signal.stft(trainData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-            #             signal.istft(temp, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-            #         except:
-            #             print('FAILED NOLA: ', NPERSEG_RANDOM, NOVERLAP_RANDOM, NPERSEG_RANDOM / NOVERLAP_RANDOM)
-
-
-
-
-
-            f, t, trainDataSTFT = signal.stft(trainData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+            f, t, validDataFreq = signal.stft(validData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
             fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
-            trainDataSTFT = trainDataSTFT[:, :, :fs_ind, :]
+            validDataFreq = validDataFreq[:, :, :fs_ind, :]
 
-            if 0:
-                trainDataISTFT = signal.istft(trainDataSTFT, 2048)  # we only using up to 100 frequency so its not a pure reconstruct but very similar
-
-                # example of reverted back to signal
-                plt.plot(trainDataISTFT[1][0][0])
-                plt.show()
-
-                upsampled = signal.resample(trainDataISTFT[1][0][0], 4500)
-                plt.plot(upsampled)
-                plt.show()
-
-                import cv2
-                resized = cv2.resize(reversee[1][0][0], (4500,1))
-                plt.plot(resized[0])
-                plt.show()
-
-            trainData = trainDataSTFT
-            # trainData = 10 * np.log10(signal.spectrogram(trainData, 2048)[2])
-
+            validData = validDataFreq
+            # validData = 10 * np.log10(signal.spectrogram(validData, 2048))
 
         ###
 
-        # Standardize the dataset
-        train_X_mean = np.mean(trainData)
-        train_X_std = np.std(trainData)
-        trainData -= train_X_mean
-        trainData /= train_X_std
-        trainData = np.expand_dims(trainData, axis=-1)
+        validData -= train_X_mean
+        validData /= train_X_std
+        validData = np.expand_dims(validData, axis=-1)
+        print('Validation data shape:', validData.shape)
 
-        print('train data shape:', trainData.shape)
+        early_stopping_monitor = EarlyStopping(monitor='val_loss', mode='min', patience=200, restore_best_weights=True)
 
-        input_shape = trainData.shape[1:]
-        model, model_name = create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_units, activation_function='sigmoid')
+        history = model.fit(x=trainData, y=trainTarget, validation_data=(validData, validTarget),
+                            # batch_size=trainData.shape[0] // batch_size_div, epochs=epochs,
+                            batch_size=64, epochs=epochs,
+                            callbacks=[early_stopping_monitor], verbose=1)
 
-        # NOTE: Initial weight file is in root directory for now
-        # model.load_weights(os.path.join(path, 'init_weights.h5'))
+        # Plot loss outputs
+        plot_loss_graphs(history.history, run_id, step, path_to_save)
 
-        opt = keras.optimizers.RMSprop(lr=learning_rate)
-        model.compile(loss=loss, optimizer=opt)
+        epochs_es.append(str(len(history.history['loss'])))  # Save the epoch the model stopped at
 
-        if not final_run:
-            # Find the hyperparameters which perform best on validation data
+        data_to_predict = validData
+        target_to_predict = validTarget
 
-            # TODO:
-            if MODE_FREQUENCY:
+    else:
 
-                f, t, validDataFreq = signal.stft(validData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-                fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
-                validDataFreq = validDataFreq[:, :, :fs_ind, :]
+        # history = model.fit(x=trainData, y=trainTarget, batch_size=trainData.shape[0] // batch_size_div, epochs=epochs[step], verbose=1)
+        history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=epochs[step], verbose=1)
 
-                validData = validDataFreq
-                # validData = 10 * np.log10(signal.spectrogram(validData, 2048))
-
-            ###
-
-            validData -= train_X_mean
-            validData /= train_X_std
-            validData = np.expand_dims(validData, axis=-1)
-            print('Validation data shape:', validData.shape)
-
-            early_stopping_monitor = EarlyStopping(monitor='val_loss', mode='min', patience=200, restore_best_weights=True)
-
-            history = model.fit(x=trainData, y=trainTarget, validation_data=(validData, validTarget),
-                                # batch_size=trainData.shape[0] // batch_size_div, epochs=epochs,
-                                batch_size=64, epochs=epochs,
-                                callbacks=[early_stopping_monitor], verbose=1)
-
-            # Plot loss outputs
-            plot_loss_graphs(history.history, run_id, step, path_to_save)
-
-            epochs_es.append(str(len(history.history['loss'])))  # Save the epoch the model stopped at
-
-            data_to_predict = validData
-            target_to_predict = validTarget
-
-        else:
-
-            # history = model.fit(x=trainData, y=trainTarget, batch_size=trainData.shape[0] // batch_size_div, epochs=epochs[step], verbose=1)
-            history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=epochs[step], verbose=1)
-
-            # model = keras.models.load_model(r'Z:\tempytempyeeg\results\SEEG-SK-04\STFT_notrim.h5')
+        # model = keras.models.load_model(r'Z:\tempytempyeeg\results\SEEG-SK-04\STFT_notrim.h5')
 
 
-            # TODO:
-            if MODE_FREQUENCY:
+        # TODO:
+        if MODE_FREQUENCY:
 
-                f, t, testDataFreq = signal.stft(testData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-                fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
-                testDataFreq = testDataFreq[:, :, :fs_ind, :]
+            f, t, testDataFreq = signal.stft(testData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+            fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
+            testDataFreq = testDataFreq[:, :, :fs_ind, :]
 
-                testData = testDataFreq
-                # testData = 10 * np.log10(signal.spectrogram(testData, 2048)[2])
+            testData = testDataFreq
+            # testData = 10 * np.log10(signal.spectrogram(testData, 2048)[2])
 
-            ###
+        ###
 
-            testData -= train_X_mean
-            testData /= train_X_std
-            testData = np.expand_dims(testData, axis=-1)
-            print('Test data shape:', testData.shape)
+        testData -= train_X_mean
+        testData /= train_X_std
+        testData = np.expand_dims(testData, axis=-1)
+        print('Test data shape:', testData.shape)
 
-            data_to_predict = testData
-            target_to_predict = testTarget
+        data_to_predict = testData
+        target_to_predict = testTarget
 
 
-        # Log outputs and losses
-        pred = model.predict(data_to_predict).reshape(-1)
-        print(str(step + 1) + ": MSE:     " + str(round(mean_squared_error(target_to_predict, pred), 5)))
+    # Log outputs and losses
+    pred = model.predict(data_to_predict).reshape(-1)
+    print(str(step + 1) + ": MSE:     " + str(round(mean_squared_error(target_to_predict, pred), 5)))
 
-        mses.append(round(mean_squared_error(target_to_predict, pred), 5))
-        targets = targets + target_to_predict.tolist()
-        preds = preds + pred.tolist()
+    mses.append(round(mean_squared_error(target_to_predict, pred), 5))
+    targets = targets + target_to_predict.tolist()
+    preds = preds + pred.tolist()
 
-        # Plot GRAD-CAMS if looking at test dataset
-        PLOT_GRAD_CAM = True
-        if final_run:
-        # if PLOT_GRAD_CAM:
-            plot_gradcams(model, testData, pred, target_to_predict, step, path_to_save, train_X_mean, train_X_std)
-
-        if not final_run:
-            del validData, validTarget
-
-        del pred, trainTarget, trainData, testData, model, history
-
-        keras.backend.clear_session()
-
-    # Re-set the output range to the original range
-    targets = (np.asarray(targets) * y_max) + y_min
-    preds = (np.asarray(preds) * y_max) + y_min
-
-    # true vs pred, true vs pred with 20% error forgiveness, true vs pred with 1 STDDEV error forgiveness
-    mse_loss_0, r2_loss_0, accuracy_0 = plot_svr_plot(targets, preds, 0.0, 'Raw', run_id, path_to_save)
-    mse_loss_02, r2_loss_02, accuracy_02 = plot_svr_plot(targets, preds, 0.2, '0.2', run_id, path_to_save)
-    mse_loss_stddev, r2_loss_stddev, accuracy_stddev = plot_svr_plot(targets, preds, np.std(targets), 'STDDEV', run_id, path_to_save)
-
-    p = np.percentile(targets, 75)
-    print(p)
-    classification_t = []
-    classification_p = []
-    for t in targets:
-        if t < p:
-            classification_t.append(0)
-        else:
-            classification_t.append(1)
-
-    for t in preds:
-        if t < p:
-            classification_p.append(0)
-        else:
-            classification_p.append(1)
-
-    confusion_matrix_test = confusion_matrix(classification_t, classification_p)
-    print("Data Distribution for Test Set: ")
-    tr_unique, tr_counts = np.unique(classification_t, return_counts=True)
-    print(dict(zip(tr_unique, tr_counts)))
-    print("Confusion Matrix for Test Set: ")
-    print(confusion_matrix_test)
-    print("")
-
-    # TODO: save confusion matrix?
-
-    print("")
-    print("AUROC:      " + str(round(roc_auc_score(classification_t, classification_p), 2)))
-    print("Precision:  " + str(round(precision_score(classification_t, classification_p), 2)))
-    print("Recall:     " + str(round(recall_score(classification_t, classification_p), 2)))
-    print("Accuracy:   " + str(round(accuracy_score(classification_t, classification_p), 2)))
-    print("Spearman C: " + str(round(spearmanr(targets, preds)[0], 2)))
-    print("Spearman p: " + str(round(spearmanr(targets, preds)[1], 2)))
-
-    plot_box_plot(targets, preds, p, '75th Percentile', run_id, path_to_save)
-
-    if True or not final_run:
-
-        # NOTE: so that we can have final results in a separate file. and we can do some experimentation and stuff and yeah
-        FILE_PREFIX = 'FINAL_RUN_' if final_run else ''
-
-        # First save the model parameters of the current run
-        full_save_path = os.path.join(path_to_save, FILE_PREFIX + "regression_results_topn.csv")
-        with open(full_save_path, 'a', newline='') as f:
-            writer = csv.writer(f)
-
-            if f.tell() == 0:
-                # First time writing to file. Write header row.
-                writer.writerow(
-                    ['Run ID', 'Model #', 'Model', 'Epochs', 'ES Epochs', 'Loss', 'Dropout Rate', 'Learning Rate',
-                     '# Graphs', '# Batches', 'Percentile', 'Regions To Use', 'NPERSEG', 'NOVERLAP'])
-
-            data = [
-                run_id, model_num, model_name, epochs, ":".join(epochs_es), loss, dropout_rate, learning_rate, num_graphs,
-                num_batches, percentile, regions_to_use, NPERSEG_RANDOM, NOVERLAP_RANDOM
-            ]
-            writer.writerow(data)
-
-        # Save the model metrics of the current run
-        full_save_path = os.path.join(path_to_save, FILE_PREFIX + "regression_results_topn_svrs.csv")
-        with open(full_save_path, 'a', newline='') as f:
-            writer = csv.writer(f)
-
-            if f.tell() == 0:
-                # First time writing to file. Write header row.
-                writer.writerow(
-                    ['Run ID', 'MSE Loss Raw', 'R2 Loss Raw', 'Accuracy Raw', 'MSE Loss 0.2', 'R2 Loss 0.2', 'Accuracy 0.2',
-                     'MSE Loss 1 STDDEV', 'R2 Loss 1 STDDEV', 'Accuracy 1 STDDEV', 'AUROC', 'Precision', 'Recall', 'Accuracy',
-                     'Spearman Correlation'])
-
-            data = [
-                run_id, mse_loss_0, r2_loss_0, accuracy_0, mse_loss_02, r2_loss_02, accuracy_02, mse_loss_stddev, r2_loss_stddev,
-                accuracy_stddev,
-                round(roc_auc_score(classification_t, classification_p), 2),
-                round(precision_score(classification_t, classification_p), 2),
-                round(recall_score(classification_t, classification_p), 2),
-                round(accuracy_score(classification_t, classification_p), 2),
-                round(spearmanr(targets, preds)[0], 2)
-            ]
-            writer.writerow(data)
-
-    # Using the best run parameters, train using all the data to create a final model
+    # Plot GRAD-CAMS if looking at test dataset
+    PLOT_GRAD_CAM = True
     if final_run:
+    # if PLOT_GRAD_CAM:
+        plot_gradcams(model, testData, pred, target_to_predict, step, path_to_save, train_X_mean, train_X_std)
 
-        trainData, trainTarget, trainTarget_p, \
-        _, _, \
-        _, _ = \
-            calculate_batch(X_full, Y, 0, 0, None, None, None, percentile, validation=False, test=False)
+    if not final_run:
+        del validData, validTarget
 
-        # Augment training dataset
-        trainData, trainTarget = augment_dataset(trainData, trainTarget, trainTarget_p, data_range, data_avg_points)
+    del pred, trainTarget, trainData, testData, model, history
 
-        # Upsample each bin in training dataset to get an even-distribution across bins
-        trainData, trainTarget = upsample_bins(trainData, trainTarget, num_batches)
+    keras.backend.clear_session()
 
-        # Standardize the dataset
-        train_X_mean = np.mean(trainData)
-        train_X_std = np.std(trainData)
-        trainData -= train_X_mean
-        trainData /= train_X_std
-        trainData = np.expand_dims(trainData, axis=-1)
+# Re-set the output range to the original range
+targets = (np.asarray(targets) * y_max) + y_min
+preds = (np.asarray(preds) * y_max) + y_min
 
-        print('train data shape:', trainData.shape)
+# true vs pred, true vs pred with 20% error forgiveness, true vs pred with 1 STDDEV error forgiveness
+mse_loss_0, r2_loss_0, accuracy_0 = plot_svr_plot(targets, preds, 0.0, 'Raw', run_id, path_to_save)
+mse_loss_02, r2_loss_02, accuracy_02 = plot_svr_plot(targets, preds, 0.2, '0.2', run_id, path_to_save)
+mse_loss_stddev, r2_loss_stddev, accuracy_stddev = plot_svr_plot(targets, preds, np.std(targets), 'STDDEV', run_id, path_to_save)
 
-        input_shape = trainData.shape[1:]
-        model, model_name = create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_units, activation_function='sigmoid')
+p = np.percentile(targets, 75)
+print(p)
+classification_t = []
+classification_p = []
+for t in targets:
+    if t < p:
+        classification_t.append(0)
+    else:
+        classification_t.append(1)
 
-        opt = keras.optimizers.RMSprop(lr=learning_rate)
-        model.compile(loss=loss, optimizer=opt)
+for t in preds:
+    if t < p:
+        classification_p.append(0)
+    else:
+        classification_p.append(1)
 
-        history = model.fit(x=trainData, y=trainTarget,
-                            batch_size=trainData.shape[0] // batch_size_div, epochs=np.mean(epochs, dtype=int), verbose=1)
+confusion_matrix_test = confusion_matrix(classification_t, classification_p)
+print("Data Distribution for Test Set: ")
+tr_unique, tr_counts = np.unique(classification_t, return_counts=True)
+print(dict(zip(tr_unique, tr_counts)))
+print("Confusion Matrix for Test Set: ")
+print(confusion_matrix_test)
+print("")
 
-        full_save_path = os.path.join(path_to_save, 'model.h5')  # TODO: or just weights?
-        model.save(full_save_path)
+# TODO: save confusion matrix?
 
-    IUSDBFISUDBFSIDBF = 5
+print("")
+print("AUROC:      " + str(round(roc_auc_score(classification_t, classification_p), 2)))
+print("Precision:  " + str(round(precision_score(classification_t, classification_p), 2)))
+print("Recall:     " + str(round(recall_score(classification_t, classification_p), 2)))
+print("Accuracy:   " + str(round(accuracy_score(classification_t, classification_p), 2)))
+print("Spearman C: " + str(round(spearmanr(targets, preds)[0], 2)))
+print("Spearman p: " + str(round(spearmanr(targets, preds)[1], 2)))
+
+plot_box_plot(targets, preds, p, '75th Percentile', run_id, path_to_save)
+
+if True or not final_run:
+
+    # NOTE: so that we can have final results in a separate file. and we can do some experimentation and stuff and yeah
+    FILE_PREFIX = 'FINAL_RUN_' if final_run else ''
+
+    # First save the model parameters of the current run
+    full_save_path = os.path.join(path_to_save, FILE_PREFIX + "regression_results_topn.csv")
+    with open(full_save_path, 'a', newline='') as f:
+        writer = csv.writer(f)
+
+        if f.tell() == 0:
+            # First time writing to file. Write header row.
+            writer.writerow(
+                ['Run ID', 'Model #', 'Model', 'Epochs', 'ES Epochs', 'Loss', 'Dropout Rate', 'Learning Rate',
+                 '# Graphs', '# Batches', 'Percentile', 'Regions To Use', 'NPERSEG', 'NOVERLAP'])
+
+        data = [
+            run_id, model_num, model_name, epochs, ":".join(epochs_es), loss, dropout_rate, learning_rate, num_graphs,
+            num_batches, percentile, regions_to_use, NPERSEG_RANDOM, NOVERLAP_RANDOM
+        ]
+        writer.writerow(data)
+
+    # Save the model metrics of the current run
+    full_save_path = os.path.join(path_to_save, FILE_PREFIX + "regression_results_topn_svrs.csv")
+    with open(full_save_path, 'a', newline='') as f:
+        writer = csv.writer(f)
+
+        if f.tell() == 0:
+            # First time writing to file. Write header row.
+            writer.writerow(
+                ['Run ID', 'MSE Loss Raw', 'R2 Loss Raw', 'Accuracy Raw', 'MSE Loss 0.2', 'R2 Loss 0.2', 'Accuracy 0.2',
+                 'MSE Loss 1 STDDEV', 'R2 Loss 1 STDDEV', 'Accuracy 1 STDDEV', 'AUROC', 'Precision', 'Recall', 'Accuracy',
+                 'Spearman Correlation'])
+
+        data = [
+            run_id, mse_loss_0, r2_loss_0, accuracy_0, mse_loss_02, r2_loss_02, accuracy_02, mse_loss_stddev, r2_loss_stddev,
+            accuracy_stddev,
+            round(roc_auc_score(classification_t, classification_p), 2),
+            round(precision_score(classification_t, classification_p), 2),
+            round(recall_score(classification_t, classification_p), 2),
+            round(accuracy_score(classification_t, classification_p), 2),
+            round(spearmanr(targets, preds)[0], 2)
+        ]
+        writer.writerow(data)
+
+# Using the best run parameters, train using all the data to create a final model
+if final_run:
+
+    trainData, trainTarget, trainTarget_p, \
+    _, _, \
+    _, _ = \
+        calculate_batch(X_full, Y, 0, 0, None, None, None, percentile, validation=False, test=False)
+
+    # Augment training dataset
+    trainData, trainTarget = augment_dataset(trainData, trainTarget, trainTarget_p, data_range, data_avg_points)
+
+    # Upsample each bin in training dataset to get an even-distribution across bins
+    trainData, trainTarget = upsample_bins(trainData, trainTarget, num_batches)
+
+    # Standardize the dataset
+    train_X_mean = np.mean(trainData)
+    train_X_std = np.std(trainData)
+    trainData -= train_X_mean
+    trainData /= train_X_std
+    trainData = np.expand_dims(trainData, axis=-1)
+
+    print('train data shape:', trainData.shape)
+
+    input_shape = trainData.shape[1:]
+    model, model_name = create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_units, activation_function='sigmoid')
+
+    opt = keras.optimizers.RMSprop(lr=learning_rate)
+    model.compile(loss=loss, optimizer=opt)
+
+    history = model.fit(x=trainData, y=trainTarget,
+                        batch_size=trainData.shape[0] // batch_size_div, epochs=np.mean(epochs, dtype=int), verbose=1)
+
+    full_save_path = os.path.join(path_to_save, 'model.h5')  # TODO: or just weights?
+    model.save(full_save_path)
