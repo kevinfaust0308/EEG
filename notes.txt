@@ -1,0 +1,8 @@
+for /l %x in (1, 1, 1000) do (
+   python find_best_model.py %x "SEEG-SK-04" 0
+)
+
+
+
+using all freq is time consuming. check 100 freq cap best model
+on all freq...if accuracy is similiar then....
