@@ -5,7 +5,7 @@ from vis.utils import utils
 
 import matplotlib
 
-# matplotlib.use("Agg")
+matplotlib.use("Agg")  # only comment this out when you are in pycharm and want to do visualiziation debugging
 import matplotlib.pyplot as plt
 
 from numpy.fft import fft, fftfreq, ifft
@@ -16,7 +16,6 @@ import h5py
 import pandas as pd
 import os
 from sklearn.metrics import mean_squared_error, r2_score
-
 
 MODE_FREQUENCY = True
 
@@ -64,12 +63,12 @@ def upsample_bins(data, target, bins):
     ranges = np.arange(0, target.max() + np.finfo(float).eps, target.max() / bins)
 
     for i in range(1, len(ranges)):
-        indices = np.where((target >= ranges[i-1]) & (target <= ranges[i]))[0]
+        indices = np.where((target >= ranges[i - 1]) & (target <= ranges[i]))[0]
         if len(indices) > sampling_limit:
             sampling_limit = len(indices)
 
     for i in range(1, len(ranges)):
-        indices = np.where((target >= ranges[i-1]) & (target <= ranges[i]))[0]
+        indices = np.where((target >= ranges[i - 1]) & (target <= ranges[i]))[0]
 
         if len(indices):
             data_to_replicate = data[indices]
@@ -80,10 +79,10 @@ def upsample_bins(data, target, bins):
                 target = np.concatenate((target, target_to_replicate))
         else:
             # no data belonging to this bin range
-            print('No data in bin ', ranges[i-1], ranges[i])
+            print('No data in bin ', ranges[i - 1], ranges[i])
             pass
 
-        indices_to_keep = np.concatenate((np.where((target >= ranges[i-1]) & (target <= ranges[i]))[0][:sampling_limit], np.where((target < ranges[i-1]) | (target > ranges[i]))[0]))
+        indices_to_keep = np.concatenate((np.where((target >= ranges[i - 1]) & (target <= ranges[i]))[0][:sampling_limit], np.where((target < ranges[i - 1]) | (target > ranges[i]))[0]))
 
         data = data[indices_to_keep]
         target = target[indices_to_keep]
@@ -108,17 +107,24 @@ def downsample(data, target, sampling_limit):
 
 # TODO: AUGMENT FFT FALSE IN SPECTOGRAM
 ######
-def augment_dataset(data, target, target_p, data_range, data_avg_points, augment_fft=False):
-    # Augment using FFT method
-    if not MODE_FREQUENCY or augment_fft:
-        data, target = augment_dataset_fft(data, target)
-
-    # Augment using shifting method
-    augment_interval_points = int(1.5 * data_avg_points)
-    augment_range = (data_range[0] - (2 * augment_interval_points), data_range[0] + (2 * augment_interval_points))
-    data, target = augment_dataset_shifting(data, target, target_p, augment_range, augment_interval_points, data_range, data_avg_points)
-
-    return data, target
+# def augment_dataset(data, target, target_p, data_range, data_avg_points, augment_fft=False):
+#     # Augment using FFT method
+#     if not MODE_FREQUENCY or augment_fft:
+#         data, target = augment_dataset_fft(data, target)
+#
+#     # Augment using shifting method
+#     # TODO: for frequency, we are not averaging so doing 1.5 * data_avg_points doesnt make sense. we will hard code 5 for small shift and 100 for big
+#     points_small_shift = 5
+#     augment_range = (data_range[0] - (2 * points_small_shift), data_range[0] + (2 * points_small_shift))
+#
+#     augment_interval_points = int(1.5 * data_avg_points)
+#     augment_range = (data_range[0] - (2 * augment_interval_points), data_range[0] + (2 * augment_interval_points))
+#     data, target = augment_dataset_shifting(data, target, target_p, augment_range, augment_interval_points, data_range, data_avg_points)
+#
+#
+#     np.random.seed(0)
+#
+#     return data, target
 ########
 
 
@@ -133,43 +139,66 @@ def augment_dataset_fft(data, target):
     return data, target
 
 
-def augment_dataset_shifting(data, target, percentile, interval_range, interval, data_range, data_avg_points):
+def augment_dataset_shift(data, target, percentile, data_range, data_avg_points, shift_by=5, left_shifts=2, right_shifts=2, response_shift=False, y_min=None, y_max=None):
+    # Shift by shift_by points to the left and right
+    interval_range = [data_range[0] - (left_shifts * shift_by), data_range[0] + (right_shifts * shift_by)]
+    # Starting range must be a positive time point
+    interval_range[0] = max(interval_range[0], 0)
 
-    # TODO:
-    CLIP_NEGATIVE = True
-
-    intervals = [i for i in range(interval_range[0], interval_range[1] + interval, interval)]
     new_data = []
     new_target = []
     for sample in range(data.shape[0]):
+
+        # By default, no shifting
+        curr_intervals = [data_range[0]]
+
         if target[sample] >= percentile or random.random() <= 0.1:
-            for interval in intervals:
-                trialData = []
-                for contact in range(data.shape[1]):
-                    R = data[sample, contact, interval:interval + data_range[1] - data_range[0]]
-                    R_avg = np.mean(R.reshape(-1, data_avg_points), axis=1)
+            # Update intervals to contain the various shifts
+            curr_intervals = [interval for interval in range(interval_range[0], interval_range[-1] + 1, shift_by)]
 
-                    # Change range of data to be non-negative (>= 0)
-                    if CLIP_NEGATIVE:
-                        R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
+        for interval in curr_intervals:
 
-                    trialData.append(R_avg)
-                new_data.append(trialData)
-                new_target.append(target[sample])
-        else:
-            trialData = []
-            for contact in range(data.shape[1]):
-                R = data[sample, contact, data_range[0]:data_range[1]]
-                R_avg = np.mean(R.reshape(-1, data_avg_points), axis=1)
+            data_slice = data[sample, :, interval:interval + data_range[1] - data_range[0]]
+            data_slice_avg = data_slice.reshape(-1, data_slice.shape[1] // data_avg_points, data_avg_points).mean(axis=2)
 
-                # Change range of data to be non-negative (>= 0)
-                if CLIP_NEGATIVE:
-                    R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
+            # Change range of data to be non-negative (>= 0)
+            # np.sign(np.amin(data_slice_avg, axis=1)) * np.abs(np.amin(data_slice_avg, axis=1)) is the same as np.amin(data_slice_avg, axis=1) (?)
+            data_slice_avg -= np.amin(data_slice_avg, axis=1)[:, np.newaxis]  # gets the amin for each contact
 
-                trialData.append(R_avg)
+            new_data.append(data_slice_avg)
 
-            new_data.append(trialData)
-            new_target.append(target[sample])
+            # NON-VECTORIZED:
+
+            # trialData = []
+            # for contact in range(data.shape[1]):
+            #     R = data[sample, contact, interval:interval + data_range[1] - data_range[0]]
+            #     R_avg = np.mean(R.reshape(-1, data_avg_points), axis=1)
+            #
+            #     # Change range of data to be non-negative (>= 0)
+            #     R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
+            #
+            #     trialData.append(R_avg)
+            #
+            # new_data.append(trialData)
+
+            if response_shift:
+                # Shifting to left will make this negative; to right is positive
+                shift_time_by = (interval - data_range[0]) / 2048
+
+                # Unscale the response and add (or subtract) time adjusted. Then re-scale
+                y_shifted = ((target[sample] * y_max) + y_min) + shift_time_by
+                y_shifted -= y_min
+                y_shifted /= y_max
+
+                # INCORRECT:
+                # Since our response time is scaled, we must scale the adjustment as well
+                # y_shifted = target[sample] + (shift_time_by - kwargs['y_min']) / kwargs['y_max']
+
+                y_shifted = np.clip(y_shifted, 0, 1)
+            else:
+                y_shifted = target[sample]
+
+            new_target.append(y_shifted)
 
     data = np.asarray(new_data)
     target = np.asarray(new_target)
@@ -178,7 +207,7 @@ def augment_dataset_shifting(data, target, percentile, interval_range, interval,
 
 
 def generate_hyperparameters():
-    percentile = random.choice([50, 75, 80, 85, 95, 95, 97, 97])
+    percentile = random.choice([75, 80, 85, 95, 95, 97, 97])
     model_num = 1
     learning_rate = round(random.random() * (0.005 - 0.001) + 0.001, 10)
     dropout_rate = random.choice([0.4, 0.5, 0.6])
@@ -217,14 +246,14 @@ def load_hyperparameters(results_path, run_id):
     L3_units = int(model_params[2][2:])
     L4_units = 0
 
-    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, regions_to_use#, row['NPERSEG'][0], row['NOVERLAP'][0]
+    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, regions_to_use  # , row['NPERSEG'][0], row['NOVERLAP'][0]
 
 
 def get_best_model(results_svr_path):
     df = pd.read_csv(results_svr_path)
     df.sort_values(by=['Accuracy 1 STDDEV'], ascending=False, inplace=True)
-    # run_id = int(df.iloc[0]['Run ID'])
-    run_id = int(df.iloc[1]['Run ID']) # TODO::::::::::::::::::::::::::::::::::::::::;
+    run_id = int(df.iloc[0]['Run ID'])
+    # run_id = int(df.iloc[1]['Run ID']) # TODO::::::::::::::::::::::::::::::::::::::::;
     return run_id
 
 
@@ -482,7 +511,6 @@ def create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_
 
 
 def plot_gradcams(model, testData, preds, targets, step, path_to_save, xmean, xstd, attn_map_cutoff=0.7):
-
     if MODE_FREQUENCY:
         penultimate_layer_idx = utils.find_layer_idx(model, "conv3d_1")
     else:
@@ -508,7 +536,7 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save, xmean, xs
                 from sklearn.preprocessing import MinMaxScaler
 
                 # TODO:
-                raise Exception('On best run, type in the nperseg and noverlap params below and then comment out this exception.')
+                # raise Exception('On best run, type in the nperseg and noverlap params below and then comment out this exception.')
 
                 img = signal.istft(img * xstd + xmean, 2048)[1][:, :10000]
                 # NOTE: scaling or not scaling results in same shape. and then when we scale 0-1, they will be indentical
@@ -731,10 +759,12 @@ def plot_svr_plot(target, classification, accuracy_window, title, run_id, path_t
     ax7.axis([lower_limit, upper_limit, lower_limit, upper_limit])
     ax7.grid(which='major', alpha=0.1)
 
+    accuracy = len(x1) * 100.0 / len(target)
+
     if accuracy_window == 0.0:
-        fig7.suptitle("Scatter Plot - Raw")
+        fig7.suptitle("Scatter Plot - Raw. Acc: {:.2f}".format(accuracy))
     else:
-        fig7.suptitle("Scatter Plot - SVR " + title)
+        fig7.suptitle("Scatter Plot - SVR {}. Acc: {:.2f}".format(title, accuracy))
     ax7.set(xlabel="True value")
     ax7.set(ylabel="Predicted value")
     plt.tight_layout()
@@ -742,7 +772,6 @@ def plot_svr_plot(target, classification, accuracy_window, title, run_id, path_t
 
     mse_loss = mean_squared_error(y2, x2)
     r2_score_val = r2_score(y2, x2)
-    accuracy = len(x1) * 100.0 / len(target)
 
     print("MSE Loss for AW-" + str(accuracy_window) + " :" + str(round(mse_loss, 5)))
     print("R2 score for AW-" + str(accuracy_window) + " :" + str(round(r2_score_val, 5)))

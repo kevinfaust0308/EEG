@@ -57,7 +57,7 @@ except:
     # local debugging parameters
     run_id = 1
     filename = 'SEEG-SK-04'
-    is_final_run = 0
+    is_final_run = 1
 
 path_to_load = os.path.join(path, 'data', filename, 'processed')
 path_to_save = os.path.join(path, 'results', filename)
@@ -117,6 +117,14 @@ else:
     # NOVERLAP_RANDOM = random.choice([NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8])
     NOVERLAP_RANDOM = NPERSEG_RANDOM // 2
 
+
+
+# TODO:
+NPERSEG_RANDOM = 256
+NOVERLAP_RANDOM = NPERSEG_RANDOM // 2
+
+
+
 [X_full], regions_to_use, num_graphs, region_nums_to_use, indices_to_use = select_regions(num_regions, max_regions_limit, top_regions, top_region_indices, data=[X_full1], region_nums_to_use=region_nums_to_use)
 
 if final_run:
@@ -155,7 +163,26 @@ for step in range(0, num_batches):
         calculate_batch(X_full, Y, B, step, num_batches, data_range, data_avg_points, percentile, validation=not final_run, test=True)
 
     # Augment training dataset
-    trainData, trainTarget = augment_dataset(trainData, trainTarget, trainTarget_p, data_range, data_avg_points)
+    if not MODE_FREQUENCY:
+        # Add random noise
+        data, target = augment_dataset_fft(trainData, trainTarget)
+
+    # After shifting, we will already have a subset of our desired data. So can't do any shifting on it.
+    # Have to small+large shift on original data and then get rid of any duplicates.
+    # (Since when we do shifting, we will have original data + augmented shifted data)
+
+    # Small data shift
+    trainDataSS, trainTargetSS = augment_dataset_shift(
+        trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=5, left_shifts=2, right_shifts=2)
+    # Large data shift (Response time is adjusted)
+    trainDataLS, trainTargetLS = augment_dataset_shift(
+        trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=100, response_shift=True, left_shifts=1, right_shifts=3, y_min=y_min, y_max=y_max)
+    # Combine the datas and get the indices of the unique rows
+    trainData, unique_indices = np.unique(np.vstack([trainDataSS, trainDataLS]), axis=0, return_index=True)
+    # Get the corresponding unique responses
+    trainTarget = np.concatenate([trainTargetSS, trainTargetLS])[unique_indices]
+
+    ###
 
     # Upsample each bin in training dataset to get an even-distribution across bins
     trainData, trainTarget = upsample_bins(trainData, trainTarget, num_batches)
@@ -260,7 +287,8 @@ for step in range(0, num_batches):
     else:
 
         # history = model.fit(x=trainData, y=trainTarget, batch_size=trainData.shape[0] // batch_size_div, epochs=epochs[step], verbose=1)
-        history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=epochs[step], verbose=1)
+        # history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=epochs[step], verbose=1)
+        history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=10, verbose=1)
 
         # model = keras.models.load_model(r'Z:\tempytempyeeg\results\SEEG-SK-04\STFT_notrim.h5')
 
@@ -295,9 +323,9 @@ for step in range(0, num_batches):
     preds = preds + pred.tolist()
 
     # Plot GRAD-CAMS if looking at test dataset
-    PLOT_GRAD_CAM = True
-    if final_run:
-    # if PLOT_GRAD_CAM:
+    PLOT_GRAD_CAM = False
+    # if final_run:
+    if PLOT_GRAD_CAM:
         plot_gradcams(model, testData, pred, target_to_predict, step, path_to_save, train_X_mean, train_X_std)
 
     if not final_run:
