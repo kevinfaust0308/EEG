@@ -12,11 +12,10 @@ K.clear_session()
 
 import tensorflow as tf
 
-# TODO: since i dont have GPU on my local computer
-# config = tf.ConfigProto(device_count={'GPU': 1, 'CPU': 15})
-# config.gpu_options.allow_growth = True
-# sess = tf.Session(config=config)
-# keras.backend.set_session(sess)
+config = tf.ConfigProto(device_count={'GPU': 1, 'CPU': 15})
+config.gpu_options.allow_growth = True
+sess = tf.Session(config=config)
+keras.backend.set_session(sess)
 
 from sklearn.metrics import accuracy_score, recall_score, precision_score, mean_squared_error
 from sklearn.metrics import roc_auc_score, confusion_matrix
@@ -57,7 +56,7 @@ except:
     # local debugging parameters
     run_id = 1
     filename = 'SEEG-SK-04'
-    is_final_run = 1
+    is_final_run = int(input('Is final run?') == 'y')
 
 path_to_load = os.path.join(path, 'data', filename, 'processed')
 path_to_save = os.path.join(path, 'results', filename)
@@ -65,10 +64,9 @@ path_to_save = os.path.join(path, 'results', filename)
 num_batches = 5  # Number of batches
 num_classes = 1  # Number of outcome classes
 
-
 if MODE_FREQUENCY:
     data_avg_points = 1  # How many datapoints to average over
-    data_range = (100, 10100)
+    data_range = (100, 4600)
 else:
     data_avg_points = 5
     data_range = (100, 4600)  # Range of data to select from full set
@@ -85,12 +83,9 @@ for dir in ['plots', 'losses', 'attn_maps']:
 
 # region_indices: the indexes of the contacts belonging to a region
 # num_regions/top_regions: the #/names of the top x regions we can choose from (selected in create_dataset.py)
-
-
 [X_full1, _], respTimes, num_regions, top_regions, top_region_indices = load_data(path_to_load)
 
 Y, y_min, y_max = normalize_output(respTimes)
-
 
 region_nums_to_use = []
 
@@ -98,7 +93,7 @@ if final_run:
     run_id = get_best_model(os.path.join(path_to_save, 'regression_results_topn_svrs.csv'))
     print(run_id)
     print("Loading hyperparameters from best model...")
-    percentile, model_num, learning_rate, dropout_rate, epochs, loss, _, L1_units, L2_units, L3_units, L4_units, regions_to_use = \
+    percentile, model_num, learning_rate, dropout_rate, epochs, loss, _, L1_units, L2_units, L3_units, L4_units, regions_to_use, stft_nperseg, stft_noverlap = \
         load_hyperparameters(os.path.join(path_to_save, 'regression_results_topn.csv'), run_id)
 
     for region in regions_to_use:
@@ -107,23 +102,10 @@ if final_run:
     run_id *= 1000
 
 else:
-    percentile, model_num, learning_rate, dropout_rate, epochs, loss, _, L1_units, L2_units, L3_units, L4_units = \
+    percentile, model_num, learning_rate, dropout_rate, epochs, loss, _, L1_units, L2_units, L3_units, L4_units, stft_nperseg, stft_noverlap = \
         generate_hyperparameters()
 
     region_nums_to_use = None
-
-    # TODO: default is 256 and 256//2
-    NPERSEG_RANDOM = random.choice([64, 128, 256, 512, 1024])
-    # NOVERLAP_RANDOM = random.choice([NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8])
-    NOVERLAP_RANDOM = NPERSEG_RANDOM // 2
-
-
-
-# TODO:
-NPERSEG_RANDOM = 256
-NOVERLAP_RANDOM = NPERSEG_RANDOM // 2
-
-
 
 [X_full], regions_to_use, num_graphs, region_nums_to_use, indices_to_use = select_regions(num_regions, max_regions_limit, top_regions, top_region_indices, data=[X_full1], region_nums_to_use=region_nums_to_use)
 
@@ -157,77 +139,48 @@ targets_train = []
 B = int(round(X_full.shape[0] / num_batches))
 for step in range(0, num_batches):
 
-    trainData, trainTarget, trainTarget_p, \
+    trainData, trainTarget, \
     validData, validTarget, \
     testData, testTarget = \
-        calculate_batch(X_full, Y, B, step, num_batches, data_range, data_avg_points, percentile, validation=not final_run, test=True)
+        calculate_batch(X_full, Y, B, step, num_batches, data_range, data_avg_points, validation=not final_run, test=True)
 
     # Augment training dataset
     if not MODE_FREQUENCY:
         # Add random noise
         data, target = augment_dataset_fft(trainData, trainTarget)
 
-    # After shifting, we will already have a subset of our desired data. So can't do any shifting on it.
-    # Have to small+large shift on original data and then get rid of any duplicates.
-    # (Since when we do shifting, we will have original data + augmented shifted data)
+    if False:
+        # After shifting, we will already have a subset of our desired data. So can't do any shifting on it.
+        # Have to small+large shift on original data and then get rid of any duplicates.
+        # (Since when we do shifting, we will have original data + augmented shifted data)
 
-    # Small data shift
-    trainDataSS, trainTargetSS = augment_dataset_shift(
-        trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=5, left_shifts=2, right_shifts=2)
-    # Large data shift (Response time is adjusted)
-    trainDataLS, trainTargetLS = augment_dataset_shift(
-        trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=100, response_shift=True, left_shifts=1, right_shifts=3, y_min=y_min, y_max=y_max)
-    # Combine the datas and get the indices of the unique rows
-    trainData, unique_indices = np.unique(np.vstack([trainDataSS, trainDataLS]), axis=0, return_index=True)
-    # Get the corresponding unique responses
-    trainTarget = np.concatenate([trainTargetSS, trainTargetLS])[unique_indices]
+        # Small data shift
+        trainDataSS, trainTargetSS = augment_dataset_shift(
+            trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=5, left_shifts=5, right_shifts=5)
+        # Large data shift (Response time is adjusted)
+        trainDataLS, trainTargetLS = augment_dataset_shift(
+            trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=100, response_shift=True, left_shifts=1, right_shifts=3, y_min=y_min, y_max=y_max)
+        # Combine the datas and get the indices of the unique rows
+        trainData, unique_indices = np.unique(np.vstack([trainDataSS, trainDataLS]), axis=0, return_index=True)
+        # Get the corresponding unique responses
+        trainTarget = np.concatenate([trainTargetSS, trainTargetLS])[unique_indices]
+    else:
+        # only do small shifts
+        trainData, trainTarget = augment_dataset_shift(
+            trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=5, left_shifts=5, right_shifts=5)
 
     ###
 
     # Upsample each bin in training dataset to get an even-distribution across bins
     trainData, trainTarget = upsample_bins(trainData, trainTarget, num_batches)
 
-    ### TODO:
     if MODE_FREQUENCY:
-
-        # # NOTE: a check for testing which combinations would work for inverting...result: all the /4 and /8 fail
-        # NPERSEG_RANDOMS = [128, 256, 512, 1024, 2048]
-        # # NOVERLAP_RANDOMS = [NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8]
-        # for NPERSEG_RANDOM in NPERSEG_RANDOMS:
-        #     for NOVERLAP_RANDOM in [NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8]:
-        #         try:
-        #             _, _, temp = signal.stft(trainData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-        #             signal.istft(temp, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
-        #         except:
-        #             print('FAILED NOLA: ', NPERSEG_RANDOM, NOVERLAP_RANDOM, NPERSEG_RANDOM / NOVERLAP_RANDOM)
-
-
-
-
-
-        f, t, trainDataSTFT = signal.stft(trainData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+        f, t, trainDataSTFT = signal.stft(trainData, FREQUENCY_FS_RATE, nperseg=stft_nperseg, noverlap=stft_noverlap)
         fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
         trainDataSTFT = trainDataSTFT[:, :, :fs_ind, :]
 
-        if 0:
-            trainDataISTFT = signal.istft(trainDataSTFT, 2048)  # we only using up to 100 frequency so its not a pure reconstruct but very similar
-
-            # example of reverted back to signal
-            plt.plot(trainDataISTFT[1][0][0])
-            plt.show()
-
-            upsampled = signal.resample(trainDataISTFT[1][0][0], 4500)
-            plt.plot(upsampled)
-            plt.show()
-
-            import cv2
-            resized = cv2.resize(reversee[1][0][0], (4500,1))
-            plt.plot(resized[0])
-            plt.show()
-
         trainData = trainDataSTFT
-        # trainData = 10 * np.log10(signal.spectrogram(trainData, 2048)[2])
-
+        # trainData = 10 * np.log10(signal.spectrogram(trainData, FREQUENCY_FS_RATE)[2])
 
     ###
 
@@ -254,13 +207,12 @@ for step in range(0, num_batches):
 
         # TODO:
         if MODE_FREQUENCY:
-
-            f, t, validDataFreq = signal.stft(validData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+            f, t, validDataFreq = signal.stft(validData, FREQUENCY_FS_RATE, nperseg=stft_nperseg, noverlap=stft_noverlap)
             fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
             validDataFreq = validDataFreq[:, :, :fs_ind, :]
 
             validData = validDataFreq
-            # validData = 10 * np.log10(signal.spectrogram(validData, 2048))
+            # validData = 10 * np.log10(signal.spectrogram(validData, FREQUENCY_FS_RATE))
 
         ###
 
@@ -287,21 +239,19 @@ for step in range(0, num_batches):
     else:
 
         # history = model.fit(x=trainData, y=trainTarget, batch_size=trainData.shape[0] // batch_size_div, epochs=epochs[step], verbose=1)
-        # history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=epochs[step], verbose=1)
-        history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=10, verbose=1)
+        history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=epochs[step], verbose=1)
+        # history = model.fit(x=trainData, y=trainTarget, batch_size=64, epochs=10, verbose=1)
 
         # model = keras.models.load_model(r'Z:\tempytempyeeg\results\SEEG-SK-04\STFT_notrim.h5')
 
-
         # TODO:
         if MODE_FREQUENCY:
-
-            f, t, testDataFreq = signal.stft(testData, 2048, nperseg=NPERSEG_RANDOM, noverlap=NOVERLAP_RANDOM)
+            f, t, testDataFreq = signal.stft(testData, FREQUENCY_FS_RATE, nperseg=stft_nperseg, noverlap=stft_noverlap)
             fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
             testDataFreq = testDataFreq[:, :, :fs_ind, :]
 
             testData = testDataFreq
-            # testData = 10 * np.log10(signal.spectrogram(testData, 2048)[2])
+            # testData = 10 * np.log10(signal.spectrogram(testData, FREQUENCY_FS_RATE)[2])
 
         ###
 
@@ -313,7 +263,6 @@ for step in range(0, num_batches):
         data_to_predict = testData
         target_to_predict = testTarget
 
-
     # Log outputs and losses
     pred = model.predict(data_to_predict).reshape(-1)
     print(str(step + 1) + ": MSE:     " + str(round(mean_squared_error(target_to_predict, pred), 5)))
@@ -323,10 +272,10 @@ for step in range(0, num_batches):
     preds = preds + pred.tolist()
 
     # Plot GRAD-CAMS if looking at test dataset
-    PLOT_GRAD_CAM = False
-    # if final_run:
-    if PLOT_GRAD_CAM:
-        plot_gradcams(model, testData, pred, target_to_predict, step, path_to_save, train_X_mean, train_X_std)
+    # PLOT_GRAD_CAM = False
+    if False and final_run:
+        # if PLOT_GRAD_CAM:
+        plot_gradcams(model, testData, pred, target_to_predict, step, path_to_save, train_X_mean, train_X_std, stft_nperseg, stft_noverlap)
 
     if not final_run:
         del validData, validTarget
@@ -339,10 +288,10 @@ for step in range(0, num_batches):
 targets = (np.asarray(targets) * y_max) + y_min
 preds = (np.asarray(preds) * y_max) + y_min
 
-# true vs pred, true vs pred with 20% error forgiveness, true vs pred with 1 STDDEV error forgiveness
+# true vs pred, true vs pred with 1 STDDEV error forgiveness
 mse_loss_0, r2_loss_0, accuracy_0 = plot_svr_plot(targets, preds, 0.0, 'Raw', run_id, path_to_save)
-mse_loss_02, r2_loss_02, accuracy_02 = plot_svr_plot(targets, preds, 0.2, '0.2', run_id, path_to_save)
 mse_loss_stddev, r2_loss_stddev, accuracy_stddev = plot_svr_plot(targets, preds, np.std(targets), 'STDDEV', run_id, path_to_save)
+_, _, _ = plot_svr_plot(targets, preds, np.std(targets), 'STDDEV - BATCH', run_id, path_to_save, batch_mode=True)
 
 p = np.percentile(targets, 75)
 print(p)
@@ -368,8 +317,6 @@ print("Confusion Matrix for Test Set: ")
 print(confusion_matrix_test)
 print("")
 
-# TODO: save confusion matrix?
-
 print("")
 print("AUROC:      " + str(round(roc_auc_score(classification_t, classification_p), 2)))
 print("Precision:  " + str(round(precision_score(classification_t, classification_p), 2)))
@@ -378,11 +325,9 @@ print("Accuracy:   " + str(round(accuracy_score(classification_t, classification
 print("Spearman C: " + str(round(spearmanr(targets, preds)[0], 2)))
 print("Spearman p: " + str(round(spearmanr(targets, preds)[1], 2)))
 
-plot_box_plot(targets, preds, p, '75th Percentile', run_id, path_to_save)
-
 if True or not final_run:
 
-    # NOTE: so that we can have final results in a separate file. and we can do some experimentation and stuff and yeah
+    # NOTE: so that we can have final results in a separate file. and we can do some experimentation and stuff
     FILE_PREFIX = 'FINAL_RUN_' if final_run else ''
 
     # First save the model parameters of the current run
@@ -394,11 +339,11 @@ if True or not final_run:
             # First time writing to file. Write header row.
             writer.writerow(
                 ['Run ID', 'Model #', 'Model', 'Epochs', 'ES Epochs', 'Loss', 'Dropout Rate', 'Learning Rate',
-                 '# Graphs', '# Batches', 'Percentile', 'Regions To Use', 'NPERSEG', 'NOVERLAP'])
+                 '# Graphs', '# Batches', 'Percentile', 'Regions To Use', 'STFT Nperseg', 'STFT Noverlap'])
 
         data = [
             run_id, model_num, model_name, epochs, ":".join(epochs_es), loss, dropout_rate, learning_rate, num_graphs,
-            num_batches, percentile, regions_to_use, NPERSEG_RANDOM, NOVERLAP_RANDOM
+            num_batches, percentile, regions_to_use, stft_nperseg, stft_noverlap
         ]
         writer.writerow(data)
 
@@ -410,13 +355,12 @@ if True or not final_run:
         if f.tell() == 0:
             # First time writing to file. Write header row.
             writer.writerow(
-                ['Run ID', 'MSE Loss Raw', 'R2 Loss Raw', 'Accuracy Raw', 'MSE Loss 0.2', 'R2 Loss 0.2', 'Accuracy 0.2',
+                ['Run ID', 'MSE Loss Raw', 'R2 Loss Raw', 'Accuracy Raw',
                  'MSE Loss 1 STDDEV', 'R2 Loss 1 STDDEV', 'Accuracy 1 STDDEV', 'AUROC', 'Precision', 'Recall', 'Accuracy',
                  'Spearman Correlation'])
 
         data = [
-            run_id, mse_loss_0, r2_loss_0, accuracy_0, mse_loss_02, r2_loss_02, accuracy_02, mse_loss_stddev, r2_loss_stddev,
-            accuracy_stddev,
+            run_id, mse_loss_0, r2_loss_0, accuracy_0, mse_loss_stddev, r2_loss_stddev, accuracy_stddev,
             round(roc_auc_score(classification_t, classification_p), 2),
             round(precision_score(classification_t, classification_p), 2),
             round(recall_score(classification_t, classification_p), 2),
@@ -427,17 +371,45 @@ if True or not final_run:
 
 # Using the best run parameters, train using all the data to create a final model
 if final_run:
-
-    trainData, trainTarget, trainTarget_p, \
+    trainData, trainTarget, \
     _, _, \
     _, _ = \
-        calculate_batch(X_full, Y, 0, 0, None, None, None, percentile, validation=False, test=False)
+        calculate_batch(X_full, Y, 0, 0, None, None, None, validation=False, test=False)
 
     # Augment training dataset
-    trainData, trainTarget = augment_dataset(trainData, trainTarget, trainTarget_p, data_range, data_avg_points)
+    if not MODE_FREQUENCY:
+        # Add random noise
+        data, target = augment_dataset_fft(trainData, trainTarget)
+
+    if False:
+        # After shifting, we will already have a subset of our desired data. So can't do any shifting on it.
+        # Have to small+large shift on original data and then get rid of any duplicates.
+        # (Since when we do shifting, we will have original data + augmented shifted data)
+
+        # Small data shift
+        trainDataSS, trainTargetSS = augment_dataset_shift(
+            trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=5, left_shifts=2, right_shifts=2)
+        # Large data shift (Response time is adjusted)
+        trainDataLS, trainTargetLS = augment_dataset_shift(
+            trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=100, response_shift=True, left_shifts=5, right_shifts=5, y_min=y_min, y_max=y_max)
+        # Combine the datas and get the indices of the unique rows
+        trainData, unique_indices = np.unique(np.vstack([trainDataSS, trainDataLS]), axis=0, return_index=True)
+        # Get the corresponding unique responses
+        trainTarget = np.concatenate([trainTargetSS, trainTargetLS])[unique_indices]
+    else:
+        # only do small shifts
+        trainData, trainTarget = augment_dataset_shift(
+            trainData, trainTarget, np.percentile(trainTarget, percentile), data_range, data_avg_points, shift_by=5, left_shifts=5, right_shifts=5)
 
     # Upsample each bin in training dataset to get an even-distribution across bins
     trainData, trainTarget = upsample_bins(trainData, trainTarget, num_batches)
+
+    if MODE_FREQUENCY:
+        f, t, trainDataSTFT = signal.stft(trainData, FREQUENCY_FS_RATE, nperseg=stft_nperseg, noverlap=stft_noverlap)
+        fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) if fs_cap else None
+        trainDataSTFT = trainDataSTFT[:, :, :fs_ind, :]
+
+        trainData = trainDataSTFT
 
     # Standardize the dataset
     train_X_mean = np.mean(trainData)
@@ -455,7 +427,8 @@ if final_run:
     model.compile(loss=loss, optimizer=opt)
 
     history = model.fit(x=trainData, y=trainTarget,
-                        batch_size=trainData.shape[0] // batch_size_div, epochs=np.mean(epochs, dtype=int), verbose=1)
+                        # batch_size=trainData.shape[0] // batch_size_div, epochs=np.mean(epochs, dtype=int), verbose=1)
+                        batch_size=64, epochs=np.mean(epochs, dtype=int), verbose=1)
 
     full_save_path = os.path.join(path_to_save, 'model.h5')  # TODO: or just weights?
     model.save(full_save_path)

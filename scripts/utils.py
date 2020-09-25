@@ -18,6 +18,7 @@ import os
 from sklearn.metrics import mean_squared_error, r2_score
 
 MODE_FREQUENCY = True
+FREQUENCY_FS_RATE = 2048
 
 
 def calculate_percentile(respType, percentile=75, p=-1):
@@ -105,29 +106,6 @@ def downsample(data, target, sampling_limit):
     return data, target
 
 
-# TODO: AUGMENT FFT FALSE IN SPECTOGRAM
-######
-# def augment_dataset(data, target, target_p, data_range, data_avg_points, augment_fft=False):
-#     # Augment using FFT method
-#     if not MODE_FREQUENCY or augment_fft:
-#         data, target = augment_dataset_fft(data, target)
-#
-#     # Augment using shifting method
-#     # TODO: for frequency, we are not averaging so doing 1.5 * data_avg_points doesnt make sense. we will hard code 5 for small shift and 100 for big
-#     points_small_shift = 5
-#     augment_range = (data_range[0] - (2 * points_small_shift), data_range[0] + (2 * points_small_shift))
-#
-#     augment_interval_points = int(1.5 * data_avg_points)
-#     augment_range = (data_range[0] - (2 * augment_interval_points), data_range[0] + (2 * augment_interval_points))
-#     data, target = augment_dataset_shifting(data, target, target_p, augment_range, augment_interval_points, data_range, data_avg_points)
-#
-#
-#     np.random.seed(0)
-#
-#     return data, target
-########
-
-
 def augment_dataset_fft(data, target):
     data_noisy_wga = induce_noise(data, 50, fs=2000, mode='whiteGaussianAdditive', max_signal_fq=1000)
     data_noisy_wra = induce_noise(data, 50, fs=2000, mode='whiteRandomAdditive', max_signal_fq=1000)
@@ -167,20 +145,6 @@ def augment_dataset_shift(data, target, percentile, data_range, data_avg_points,
 
             new_data.append(data_slice_avg)
 
-            # NON-VECTORIZED:
-
-            # trialData = []
-            # for contact in range(data.shape[1]):
-            #     R = data[sample, contact, interval:interval + data_range[1] - data_range[0]]
-            #     R_avg = np.mean(R.reshape(-1, data_avg_points), axis=1)
-            #
-            #     # Change range of data to be non-negative (>= 0)
-            #     R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
-            #
-            #     trialData.append(R_avg)
-            #
-            # new_data.append(trialData)
-
             if response_shift:
                 # Shifting to left will make this negative; to right is positive
                 shift_time_by = (interval - data_range[0]) / 2048
@@ -189,11 +153,6 @@ def augment_dataset_shift(data, target, percentile, data_range, data_avg_points,
                 y_shifted = ((target[sample] * y_max) + y_min) + shift_time_by
                 y_shifted -= y_min
                 y_shifted /= y_max
-
-                # INCORRECT:
-                # Since our response time is scaled, we must scale the adjustment as well
-                # y_shifted = target[sample] + (shift_time_by - kwargs['y_min']) / kwargs['y_max']
-
                 y_shifted = np.clip(y_shifted, 0, 1)
             else:
                 y_shifted = target[sample]
@@ -221,7 +180,12 @@ def generate_hyperparameters():
     L3_units = L2_units // 2
     L4_units = L3_units // 2
 
-    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units
+    # TODO: default is 256 and 256//2
+    stft_nperseg = random.choice([64, 128, 256, 512, 1024])
+    # NOVERLAP_RANDOM = random.choice([NPERSEG_RANDOM // 2, NPERSEG_RANDOM // 4, NPERSEG_RANDOM // 8])
+    stft_noverlap = stft_nperseg // 2
+
+    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, stft_nperseg, stft_noverlap
 
 
 def load_hyperparameters(results_path, run_id):
@@ -246,14 +210,16 @@ def load_hyperparameters(results_path, run_id):
     L3_units = int(model_params[2][2:])
     L4_units = 0
 
-    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, regions_to_use  # , row['NPERSEG'][0], row['NOVERLAP'][0]
+    stft_nperseg, stft_noverlap = row['STFT Nperseg'][0], row['STFT Noverlap'][0]
+
+    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, regions_to_use, stft_nperseg, stft_noverlap
 
 
 def get_best_model(results_svr_path):
     df = pd.read_csv(results_svr_path)
     df.sort_values(by=['Accuracy 1 STDDEV'], ascending=False, inplace=True)
     run_id = int(df.iloc[0]['Run ID'])
-    # run_id = int(df.iloc[1]['Run ID']) # TODO::::::::::::::::::::::::::::::::::::::::;
+    # run_id = int(df.iloc[1]['Run ID'])  # TODO
     return run_id
 
 
@@ -344,57 +310,62 @@ def calculate_top_n_graphs(X, num_graphs, additional_X=[]):
     return X, additional_X
 
 
-def calculate_abs_difference(X, target_classes, num_classes=1):
-    X_c = np.copy(X)
+# NOTE: NOT USED
+# def calculate_abs_difference(X, target_classes, num_classes=1):
+#     X_c = np.copy(X)
+#
+#     # Generate two arrays, one for each outcome
+#     if num_classes == 1:
+#         outcome_array = [[[] for _ in range(X_c.shape[1])] for _ in range(num_classes + 1)]
+#     else:
+#         outcome_array = [[[] for _ in range(X_c.shape[1])] for _ in range(num_classes)]
+#
+#     # Populate different outcome arrays
+#     for trial in range(X_c.shape[0]):
+#         for contact in range(X_c.shape[1]):
+#             Ra = X_c[trial, contact]
+#             outcome_array[target_classes[trial]][contact].append(Ra.tolist())
+#
+#     outcome_array = np.asarray(outcome_array)
+#
+#     # Squeeze array and calculate averages for each outcome
+#     outcome_array_avg = [[] for _ in range(outcome_array.shape[0])]
+#     for class_num in range(outcome_array.shape[0]):
+#         for contact in range(outcome_array.shape[1]):
+#             outcome_array_avg[class_num].append(np.mean(outcome_array[class_num][contact], axis=0))
+#
+#     outcome_array_avg = np.asarray(outcome_array_avg)
+#
+#     outcome_array_diffs_o = np.sum(abs(abs(outcome_array_avg[0]) - abs(outcome_array_avg[1])), axis=1)  # Get the difference of each EEG plot between the two outcomes
+#
+#     X_c = np.swapaxes(X_c, 0, 1)
+#     # for i in range(X_c.shape[1]):
+#     # X_c[[58, 59, 69, 133]] = 0
+#     # outcome_array_diffs = np.sum(np.sum(X_c, axis=1), axis=1)
+#     outcome_array_diffs = np.sum(np.mean(X_c, axis=1), axis=1)
+#
+#     # Average across all trials, then take 'derivative' and sum separately for each contact. Contact with the highest value has experienced the most change
+#     outcome_array_diffs = np.sum(abs(np.diff(np.mean(X_c, axis=1), axis=1)), axis=1)
+#
+#     return outcome_array_avg, outcome_array_diffs
+# NOTE: condensed version
+def calculate_abs_difference(X):
+    X = X.copy()
+    # Group trials by contact. Average over all the trials per contact and sort by the contacts with the most change in their EEG plot
+    X = np.swapaxes(X, 0, 1)
+    return np.sum(abs(np.diff(np.mean(X, axis=1), axis=1)), axis=1)
 
-    # Generate two arrays, one for each outcome
-    if num_classes == 1:
-        outcome_array = [[[] for _ in range(X_c.shape[1])] for _ in range(num_classes + 1)]
-    else:
-        outcome_array = [[[] for _ in range(X_c.shape[1])] for _ in range(num_classes)]
 
-    # Populate different outcome arrays
-    for trial in range(X_c.shape[0]):
-        for contact in range(X_c.shape[1]):
-            Ra = X_c[trial, contact]
-            outcome_array[target_classes[trial]][contact].append(Ra.tolist())
-
-    outcome_array = np.asarray(outcome_array)
-
-    # Squeeze array and calculate averages for each outcome
-    outcome_array_avg = [[] for _ in range(outcome_array.shape[0])]
-    for class_num in range(outcome_array.shape[0]):
-        for contact in range(outcome_array.shape[1]):
-            outcome_array_avg[class_num].append(np.mean(outcome_array[class_num][contact], axis=0))
-
-    outcome_array_avg = np.asarray(outcome_array_avg)
-
-    outcome_array_diffs_o = np.sum(abs(abs(outcome_array_avg[0]) - abs(outcome_array_avg[1])), axis=1)  # Get the difference of each EEG plot between the two outcomes
-
-    X_c = np.swapaxes(X_c, 0, 1)
-    # for i in range(X_c.shape[1]):
-    # X_c[[58, 59, 69, 133]] = 0
-    # outcome_array_diffs = np.sum(np.sum(X_c, axis=1), axis=1)
-    outcome_array_diffs = np.sum(np.mean(X_c, axis=1), axis=1)
-
-    # Average across all trials, then take 'derivative' and sum separately for each contact. Contact with the highest value has experienced the most change
-    outcome_array_diffs = np.sum(abs(np.diff(np.mean(X_c, axis=1), axis=1)), axis=1)
-
-    return outcome_array_avg, outcome_array_diffs
-
-
-def sort_by_abs_difference(X, contact_info, target_classes, additional_X=[], num_classes=1):
-    outcome_array_avg, outcome_array_diffs = calculate_abs_difference(X, target_classes, num_classes)
+def sort_by_abs_difference(X, contact_info, additional_X=[]):
+    outcome_array_diffs = calculate_abs_difference(X)
 
     indices = outcome_array_diffs.argsort()[::-1]
+
     outcome_array_diffs = outcome_array_diffs[indices]
-    outcome_array_avg[0] = outcome_array_avg[0][indices]
-    outcome_array_avg[1] = outcome_array_avg[1][indices]
     contact_info = contact_info.iloc[indices, :]
     contact_info = contact_info.reset_index(drop=True)
 
     # Limit dataset to num_graphs indices only, in descending order of magnitude
-    X = X[:, indices]
     additional_X = [X_array[:, indices] for X_array in additional_X]
 
     # # Normalize everything to between 0-1
@@ -404,10 +375,11 @@ def sort_by_abs_difference(X, contact_info, target_classes, additional_X=[], num
     # X -= np.mean(X)
     # X /= np.std(X)
 
-    return X, contact_info, additional_X
+    return contact_info, additional_X
 
 
-def remove_regions(region, contact_info, regions, X_values=[]):
+# Remove nan regions/regions we want to exclude from both the dataframe and from out data
+def remove_regions(region, contact_info, X_values=[]):
     region_to_remove = contact_info.index[contact_info['aal_label'] == region].tolist()
     regions_to_exclude = contact_info.index[contact_info['exclude'] == '1'].tolist()
     indices_to_remove = region_to_remove + regions_to_exclude
@@ -416,9 +388,8 @@ def remove_regions(region, contact_info, regions, X_values=[]):
     X_values = [np.delete(X_array, indices_to_remove, axis=1) for X_array in X_values]
     contact_info = contact_info.drop(indices_to_remove)
     contact_info = contact_info.reset_index(drop=True)
-    regions = np.delete(regions, indices_to_remove, axis=0)
 
-    return contact_info, regions, X_values
+    return contact_info, X_values
 
 
 def set_data_range(data, data_range, data_avg_points):
@@ -435,7 +406,17 @@ def set_data_range(data, data_range, data_avg_points):
 # When not on final run, we set aside these but only use train and cross validate on val.
 # When on final run, we set aside only test and train on everything else.
 # When creating our final model, we dont set any aside and just train on all data.
-def calculate_batch(X_full, Y, B, step, num_batches, data_range, data_avg_points, percentile, validation=True, test=True):
+def calculate_batch(X_full, Y, B, step, num_batches, data_range, data_avg_points, validation=True, test=True):
+    def set_data_range(data, data_range, data_avg_points):
+        data = data[:, :, data_range[0]:data_range[1]]
+        data_new = np.empty((data.shape[0], data.shape[1], data.shape[2] // data_avg_points))
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                data_new[i, j] = np.mean(data[i, j].reshape(-1, data_avg_points), axis=1)
+                data_new[i, j] -= np.sign(np.amin(data_new[i, j])) * np.abs(np.amin(data_new[i, j]))
+        return data_new
+
+
     i_batch = step * B
 
     validData, validTarget, testData, testTarget = None, None, None, None
@@ -466,37 +447,19 @@ def calculate_batch(X_full, Y, B, step, num_batches, data_range, data_avg_points
 
     trainData, trainTarget = X_full[train_indices], Y[train_indices]
 
-    _, trainTarget_p = calculate_percentile(trainTarget, percentile=percentile)
-
-    return trainData, trainTarget, trainTarget_p, validData, validTarget, testData, testTarget
+    return trainData, trainTarget, validData, validTarget, testData, testTarget
 
 
 def create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_units, activation_function):
     model = Sequential()
 
     if not MODE_FREQUENCY:
-
         model.add(Conv2D(L1_units, padding='valid', kernel_size=(1, input_shape[1] // 5), dilation_rate=2, activation='relu', input_shape=input_shape))
         model.add(Conv2D(L2_units, padding='valid', kernel_size=(input_shape[0], 10), dilation_rate=1, activation='relu'))
-
-        # model.add(Conv2D(L1_units, padding='valid', kernel_size=(input_shape[0], input_shape[1] // 5), activation='relu', input_shape=input_shape))
-        # model.add(Conv2D(L2_units, padding='valid', kernel_size=(1, input_shape[1] // 5), activation='relu'))
-
     else:
-        from keras.layers import Conv3D, TimeDistributed
+        from keras.layers import Conv3D
         model.add(Conv3D(L1_units, padding='valid', kernel_size=(1, 3, 3), activation='relu', input_shape=input_shape))
         model.add(Conv3D(L2_units, padding='valid', kernel_size=(input_shape[0], 3, 3), activation='relu'))
-
-        # model.add(
-        #     TimeDistributed(
-        #         Conv2D(L1_units, padding='valid', kernel_size=(3, 3),  activation='relu', input_shape=input_shape)
-        #     )
-        # )
-        # model.add(
-        #     TimeDistributed(
-        #         Conv2D(L2_units, padding='valid', kernel_size=(3, 3), activation='relu')
-        #     )
-        # )
 
     model.add(Flatten())
     model.add(Dense(L2_units, activation='relu'))
@@ -505,12 +468,11 @@ def create_model(input_shape, dropout_rate, num_classes, L1_units, L2_units, L3_
 
     model.add(Dropout(dropout_rate))
     model.add(Dense(num_classes, activation=activation_function))
-    # model.add(Dense(num_classes, activation='relu')) # TODO <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     return model, model_name
 
 
-def plot_gradcams(model, testData, preds, targets, step, path_to_save, xmean, xstd, attn_map_cutoff=0.7):
+def plot_gradcams(model, testData, preds, targets, step, path_to_save, xmean, xstd, nperseg, noverlap, attn_map_cutoff=0.7):
     if MODE_FREQUENCY:
         penultimate_layer_idx = utils.find_layer_idx(model, "conv3d_1")
     else:
@@ -538,9 +500,10 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save, xmean, xs
                 # TODO:
                 # raise Exception('On best run, type in the nperseg and noverlap params below and then comment out this exception.')
 
-                img = signal.istft(img * xstd + xmean, 2048)[1][:, :10000]
+                NUM_DATA_POINTS = 4500  # TODO:
+                img = signal.istft(img * xstd + xmean, 2048, nperseg=nperseg, noverlap=noverlap)[1][:, :NUM_DATA_POINTS]
                 # NOTE: scaling or not scaling results in same shape. and then when we scale 0-1, they will be indentical
-                attn_map_inverted = signal.istft(attn_map * xstd + xmean, 2048)[1][:, :10000]
+                attn_map_inverted = signal.istft(attn_map * xstd + xmean, 2048, nperseg=nperseg, noverlap=noverlap)[1][:, :NUM_DATA_POINTS]
 
                 attn_map_inverted = MinMaxScaler().fit_transform(attn_map_inverted.T).T
 
@@ -702,6 +665,18 @@ def select_regions(num_regions, max_regions_limit, top_regions, top_region_indic
     return data, regions_to_use, num_graphs, region_nums_to_use, indices_to_use
 
 
+def select_contacts2(data, contacts, regions, top_x_contacts=20, max_contact_limit=5):
+    indices_to_use = np.random.choice(np.arange(top_x_contacts), size=np.random.randint(1, max_contact_limit + 1), replace=False)
+
+    # names
+    contacts_to_use = ':'.join(contacts[indices_to_use].tolist())
+    regions_to_use = ':'.join(regions[indices_to_use].tolist())
+
+    data = data[:, indices_to_use]
+
+    return data, contacts_to_use, regions_to_use
+
+
 def load_data(path_to_load):
     dataset = h5py.File(os.path.join(path_to_load, 'processed_data.h5'), 'r')
     X_full, X_spec, respTimes, shifts = dataset.get('data_full')[()], \
@@ -720,29 +695,44 @@ def load_data(path_to_load):
     return [X_full, X_spec], respTimes, num_regions, top_regions, top_region_indices
 
 
-def plot_svr_plot(target, classification, accuracy_window, title, run_id, path_to_save):
-    x1 = []
-    x2 = []
-    y1 = []
-    y2 = []
+# Loads the contact based data
+def load_data2(path_to_load):
+    dataset = h5py.File(os.path.join(path_to_load, 'processed_data.h5'), 'r')
+    X_full, respTimes, shifts = dataset.get('data_full')[()], dataset.get('respTimes')[()], dataset.get('shifts')[()]
 
-    for i in range(len(target)):
-        if target[i] >= classification[i] - accuracy_window and target[i] <= classification[i] + accuracy_window:
-            x1.append(target[i])
-            y1.append(classification[i])
-        else:
-            x2.append(target[i])
-            y2.append(classification[i])
+    contacts, regions = dataset.attrs['contacts'], dataset.attrs['regions']
+
+    dataset.close()
+
+    return X_full, respTimes, contacts, regions
+
+
+def plot_svr_plot(target, classification, accuracy_window, title, run_id, path_to_save, batch_mode=False):
+    # Mask of which indices are within our accuracy window
+    mask = (classification + accuracy_window >= target) & (target >= classification - accuracy_window)
 
     plt.close('all')
-    fig7, ax7 = plt.subplots(1, 1, figsize=(10, 10))
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
     if accuracy_window == 0.0:
-        ax7.scatter(x=x1, y=y1, c='b', alpha=0.5)
-        ax7.scatter(x=x2, y=y2, c='b', alpha=0.5)
+        ax.scatter(x=target, y=classification, c='b', alpha=0.5)
+
+    elif batch_mode:
+        # each batch will have a different color. useful for seeing if some batches are more wrong than others
+        num_batches = 5
+        batch_size = target.shape[0] // num_batches
+
+        for i in range(num_batches):
+            curr_target = target[i * batch_size:(i + 1) * batch_size]
+            curr_classification = classification[i * batch_size:(i + 1) * batch_size]
+
+            ax.scatter(x=curr_target, y=curr_classification, alpha=0.5)
     else:
-        ax7.scatter(x=x1, y=y1, c='g', alpha=0.5)
-        ax7.scatter(x=x2, y=y2, c='r', alpha=0.5)
+
+        # green for dots inside acc window. red for outside
+        ax.scatter(x=target[mask], y=classification[mask], c='g', alpha=0.5)
+        ax.scatter(x=target[~mask], y=classification[~mask], c='r', alpha=0.5)
+
     upper_limit_1 = max(target) + 0.05
     upper_limit_2 = max(classification) + 0.05
     upper_limit = max(upper_limit_1, upper_limit_2)
@@ -752,26 +742,26 @@ def plot_svr_plot(target, classification, accuracy_window, title, run_id, path_t
     lower_limit = 0  # min(lower_limit_1, lower_limit_2)
 
     x = np.linspace(lower_limit, upper_limit, 1000)
-    ax7.plot(x, x, '-k')
-    ax7.plot(x, x + accuracy_window, ':k')
-    ax7.plot(x, x - accuracy_window, ':k')
+    ax.plot(x, x, '-k')
+    ax.plot(x, x + accuracy_window, ':k')
+    ax.plot(x, x - accuracy_window, ':k')
 
-    ax7.axis([lower_limit, upper_limit, lower_limit, upper_limit])
-    ax7.grid(which='major', alpha=0.1)
+    ax.axis([lower_limit, upper_limit, lower_limit, upper_limit])
+    ax.grid(which='major', alpha=0.1)
 
-    accuracy = len(x1) * 100.0 / len(target)
+    accuracy = sum(mask) * 100.0 / len(target)
 
     if accuracy_window == 0.0:
-        fig7.suptitle("Scatter Plot - Raw. Acc: {:.2f}".format(accuracy))
+        fig.suptitle("Scatter Plot - Raw")
     else:
-        fig7.suptitle("Scatter Plot - SVR {}. Acc: {:.2f}".format(title, accuracy))
-    ax7.set(xlabel="True value")
-    ax7.set(ylabel="Predicted value")
+        fig.suptitle("Scatter Plot - SVR {}. Acc: {:.2f}".format(title, accuracy))
+    ax.set(xlabel="True value")
+    ax.set(ylabel="Predicted value")
     plt.tight_layout()
-    fig7.savefig(os.path.join(path_to_save, 'plots', 'plots_scatter_{}_{}.png'.format(accuracy_window, run_id)))
+    fig.savefig(os.path.join(path_to_save, 'plots', '{}plots_scatter_{}_{}.png'.format('BATCH_' if batch_mode else '', accuracy_window, run_id)))
 
-    mse_loss = mean_squared_error(y2, x2)
-    r2_score_val = r2_score(y2, x2)
+    mse_loss = mean_squared_error(classification[~mask], target[~mask])
+    r2_score_val = r2_score(classification[~mask], target[~mask])
 
     print("MSE Loss for AW-" + str(accuracy_window) + " :" + str(round(mse_loss, 5)))
     print("R2 score for AW-" + str(accuracy_window) + " :" + str(round(r2_score_val, 5)))
@@ -779,46 +769,3 @@ def plot_svr_plot(target, classification, accuracy_window, title, run_id, path_t
     print("")
 
     return mse_loss, r2_score_val, accuracy
-
-
-def plot_box_plot(target, classification, p, title, run_id, path_to_save):
-    x1 = []
-    x2 = []
-    y1 = []
-    y2 = []
-
-    for i in range(len(target)):
-        if (target[i] >= p and classification[i] >= p) or (target[i] <= p and classification[i] <= p):
-            x1.append(target[i])
-            y1.append(classification[i])
-        else:
-            x2.append(target[i])
-            y2.append(classification[i])
-
-    plt.close('all')
-    fig7, ax7 = plt.subplots(1, 1, figsize=(10, 10))
-
-    ax7.scatter(x=x1, y=y1, c='g', alpha=0.5)
-    ax7.scatter(x=x2, y=y2, c='r', alpha=0.5)
-
-    upper_limit_1 = max(target) + 0.05
-    upper_limit_2 = max(classification) + 0.05
-    upper_limit = max(upper_limit_1, upper_limit_2)
-
-    lower_limit_1 = min(target) - 0.05
-    lower_limit_2 = min(classification) - 0.05
-    lower_limit = 0  # min(lower_limit_1, lower_limit_2)
-
-    x = np.linspace(lower_limit, upper_limit, 1000)
-    const_p = np.linspace(p, p, 1000)
-    ax7.plot(const_p, x, ':k')
-    ax7.plot(x, const_p, ':k')
-
-    ax7.axis([lower_limit, upper_limit, lower_limit, upper_limit])
-    ax7.grid(which='major', alpha=0.1)
-
-    fig7.suptitle("Scatter Plot - Classification at " + str(title))
-    ax7.set(xlabel="True Label")
-    ax7.set(ylabel="Predicted Label")
-    plt.tight_layout()
-    fig7.savefig(os.path.join(path_to_save, 'plots', 'plots_scatter_' + "box_" + str(run_id) + '.png'))

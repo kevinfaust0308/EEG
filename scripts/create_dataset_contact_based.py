@@ -10,9 +10,9 @@ import math
 import socket
 import numpy as np
 import pandas as pd
-from scipy import signal
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -38,6 +38,7 @@ num_regions = 10
 percentile = 75
 
 
+# TODO: NOT USED
 def calculate_abs_differences(data, respType, is_normalized):
     X_c = np.copy(data)
 
@@ -74,6 +75,7 @@ def calculate_abs_differences(data, respType, is_normalized):
 
     return L, LL, LLL
 
+
 def plot_responseTimes(respTimes, path_to_save):
     p = np.percentile(respTimes, percentile)  # <- adjust here to change percentile classification
 
@@ -84,9 +86,10 @@ def plot_responseTimes(respTimes, path_to_save):
     plt.savefig(os.path.join(path_to_save, "responseTimes.png"))
     plt.clf()
 
+
 def plot_top10(data, target_classes, contact_info, path_to_save):
     LL, LLL = calculate_abs_difference(data, target_classes)
-	
+
     data_avg = np.mean(np.swapaxes(data, 0, 1), axis=1)
 
     fig, ax = plt.subplots(nrows=5, ncols=2, figsize=(12, 16))
@@ -105,14 +108,16 @@ def plot_top10(data, target_classes, contact_info, path_to_save):
     plt.savefig(filename, dpi=800)
     plt.clf()
 
-def plot_n_regions(data, target_classes, contact_info, path_to_save, n=1):
-    LL, LLL = calculate_abs_difference(data, target_classes)
+
+# NOTE: not used in contact version
+def plot_n_regions(data, contact_info, path_to_save, n=1):
+    outcome_array_diffs = calculate_abs_difference(data)
 
     data_avg = np.mean(np.swapaxes(data, 0, 1), axis=1)
     all_regions = contact_info['aal_label'].unique()
     region_vals = {region: {'value': 0, 'count': 0, 'indices': []} for region in all_regions}
 
-    for index, diff in enumerate(LLL):
+    for index, diff in enumerate(outcome_array_diffs):
         region = contact_info['aal_label'][index]
 
         region_vals[region]['value'] += diff
@@ -139,11 +144,11 @@ def plot_n_regions(data, target_classes, contact_info, path_to_save, n=1):
         indices = region_vals[top_region]['indices']
         top_region_indices.append(indices)
 
-        print("Top Region " + str(region_num+1) + ": " + top_region + " - " + str(indices))
+        print("Top Region " + str(region_num + 1) + ": " + top_region + " - " + str(indices))
 
         fig_cols = 2
-        fig_rows = (len(indices)/2) + (len(indices)%2)
-        fig, ax = plt.subplots(nrows=fig_rows, ncols=fig_cols, figsize=(16, 12*fig_rows/fig_cols))
+        fig_rows = (len(indices) / 2) + (len(indices) % 2)
+        fig, ax = plt.subplots(nrows=fig_rows, ncols=fig_cols, figsize=(16, 12 * fig_rows / fig_cols))
         a = 0
         if fig_rows > 1 and fig_cols > 1:
             for row in ax:
@@ -169,19 +174,22 @@ def plot_n_regions(data, target_classes, contact_info, path_to_save, n=1):
                 if a == len(indices):
                     break
 
-        filename = os.path.join(path_to_save, "top_region" + str(region_num+1) + ".png")
+        filename = os.path.join(path_to_save, "top_region" + str(region_num + 1) + ".png")
 
         plt.suptitle(top_region)
         plt.savefig(filename, dpi=800)
         plt.clf()
 
     top_regions = all_regions[:n]
-    #indices = np.asarray([region_vals[top_region]['indices'] for top_region in top_regions])
+    # indices = np.asarray([region_vals[top_region]['indices'] for top_region in top_regions])
     print(top_region_indices)
-    #indices = [item for sublist in indices for item in sublist]
+    # indices = [item for sublist in indices for item in sublist]
     return top_regions, top_region_indices
 
-def get_regions(path_to_load):
+
+# NOTE: called in load_data
+def get_contact_mapping(path_to_load):
+    # This is the order of the contacts for each contact
     labels = []
     ft_structure = h5py.File(os.path.join(path_to_load, "ft_structure.mat"), 'r')
     for row in range(ft_structure['label'].shape[0]):
@@ -190,16 +198,15 @@ def get_regions(path_to_load):
         labels.append(curr_label)
     labels = np.asarray(labels)
 
+    # Want to make the corresponding info mapping file in the same order. The below will do the sorting
     contact_mappings = pd.read_csv(os.path.join(path_to_load, "contact_mapping.csv"))
     contacts = contact_mappings['contact'].values
 
-    indices = [np.where(labels==elem)[0][0] for elem in contacts]
+    indices = [np.where(labels == elem)[0][0] for elem in contacts]
 
     contact_mappings['indices'] = indices
     contact_mappings = contact_mappings.sort_values(['indices'])
     contact_mappings = contact_mappings.reset_index(drop=True)
-
-    regions = contact_mappings['aal_label'].values.astype(str)
 
     contact_info = contact_mappings[['electrode', 'contact', 'aal_label', 'ba_label', 'exclude']].astype(str)
 
@@ -207,28 +214,8 @@ def get_regions(path_to_load):
         print("ERROR, missing contacts! Exiting now.")
         sys.exit(1)
 
-    return contact_info, regions
+    return contact_info
 
-def plot_spectrogram(data, path_to_save):
-    f, t, Sxx = data
-    print(f)
-    print(t)
-    print(Sxx)
-    plt.pcolormesh(t, f, Sxx, cmap='Greys')
-    plt.ylabel('Frequency (Hz)')
-    plt.xlabel('Time (s)')
-    plt.savefig(os.path.join(path_to_save, "test1.png"))
-
-def get_spectrogram(data, fs, nperseg=100, noverlap=50, fs_cap=None):
-    f, t, Sxx = signal.spectrogram(data, fs)#, nperseg=nperseg, noverlap=noverlap)
-    fs_ind = None
-    if fs_cap is not None:
-        fs_ind = next(i for i, res in enumerate(f > fs_cap) if res) - 1
-        #print('max frequency:', f[fs_ind])
-    #print(f.shape)
-    #print(t.shape)
-    #print(Sxx.shape)
-    return f[:fs_ind], t, Sxx[:fs_ind, :]
 
 def load_data(path_to_load):
     dataset = h5py.File(os.path.join(path_to_load, "trl.mat"), 'r')
@@ -250,88 +237,73 @@ def load_data(path_to_load):
             respTime = unshifted_respTimes[shift2_trial_index]
             shift2_trial_index += 1
 
-        respTimes.append(respTime/fs)
+        respTimes.append(respTime / fs)
     respTimes = np.array(respTimes)
     shifts = 2 - shifts
 
-    #Get regions and contact info
-    contact_info, regions = get_regions(path_to_load)
+    # Get contact info, ordered alongside the mat file format
+    contact_info = get_contact_mapping(path_to_load)
 
-    return respTimes, shifts, contact_info, regions
+    return respTimes, shifts, contact_info
 
 
-respTimes, shifts, contact_info, regions = load_data(path_to_load)
-
-#pd.set_option('display.max_rows', 1000)
-#print contact_info['contact']
-#sys.exit(1)
-
+respTimes, shifts, contact_info = load_data(path_to_load)
 print(respTimes.shape)
 
-X = []
-X_full = []
-X_spec = []
-Y = []
-X_diff = []
 
-for i in range(respTimes.shape[0]):
-    trialindex = "%03d" % (i + 1)
-    f = h5py.File(os.path.join(path_to_load, "trialdata_" + trialindex + ".mat"), 'r')
-    A = f['trialdata'][:]
-    A = np.transpose(A)
+presaved_dats = r'Z:\tempytempyeeg\data\SEEG-SK-04'
 
-    # Extract FFT Parameters
-    trialData = []
-    trialData_full = []
-    trialData_spec = []
+if presaved_dats:
+    X_full = np.load(os.path.join(presaved_dats, 'X_full.npy'))
+    Y = np.load(os.path.join(presaved_dats, 'Y.npy'))
+else:
 
-    for n in range(A.shape[0]):
-        A_n = A[n]
-        R = A_n[1500:3000]
+    X_full = []
+    Y = []
 
-        R_avg = np.mean(R.reshape(-1, 15), axis=1)
+    for i in range(respTimes.shape[0]):
+        trialindex = "%03d" % (i + 1)
+        f = h5py.File(os.path.join(path_to_load, "trialdata_" + trialindex + ".mat"), 'r')
+        A = f['trialdata'][:]
+        A = np.transpose(A)
 
-        # Change range of data to be non-negative (>= 0)
-        R_avg -= np.sign(np.amin(R_avg))*np.abs(np.amin(R_avg))
-        A_n -= np.sign(np.amin(A_n[1250:3250]))*np.abs(np.amin(A_n[1250:3250]))
+        # Extract FFT Parameters
+        trialData_full = []
 
-        #R_spec = get_spectrogram(A_n[1250:3250], 2048, fs_cap=100)
-        f, t, Sxx = get_spectrogram(A_n[1250:3250], 2048, fs_cap=100)
-        R_spec = Sxx
+        for n in range(A.shape[0]):
+            A_n = A[n]
+            R = A_n[1500:3000]
 
-        trialData.append(R_avg)
-        trialData_full.append(A_n)
-        trialData_spec.append(R_spec)
+            R_avg = np.mean(R.reshape(-1, 15), axis=1)
 
-    trialData_full = np.asarray(trialData_full)
-    #trialData_full /= np.amax(trialData_full[:, 1250:3250])
-    curr_diff = np.amax(trialData_full[:, 1000:3500]) - np.amin(trialData_full[:, 1000:3500])
-    print(str(trialindex) + " -- " + str(round(np.amin(trialData_full[:, 1000:3500]), 2)) + " - " + str(round(np.amax(trialData_full[:, 1000:3500]), 2)) + " -- " + str(round(np.average(trialData_full[:, 1000:3500]), 2)) + " -- " + str(round(curr_diff, 2)) + " -- " + str(round(respTimes[i], 2)))
-    X_diff.append(curr_diff)
+            # Change range of data to be non-negative (>= 0)
+            R_avg -= np.sign(np.amin(R_avg)) * np.abs(np.amin(R_avg))
+            A_n -= np.sign(np.amin(A_n[1250:3250])) * np.abs(np.amin(A_n[1250:3250]))
 
-    X.append(trialData)
-    X_full.append(trialData_full)
-    X_spec.append(trialData_spec)
-    Y.append(respTimes[i])
+            trialData_full.append(A_n)
 
-    # print len(trialData_full)
-    # fig = plt.figure()
-    # plt.imshow(trialData_full)
-    # plt.show()
-    # sys.exit(1)
+        trialData_full = np.asarray(trialData_full)
+        # trialData_full /= np.amax(trialData_full[:, 1250:3250])
+        curr_diff = np.amax(trialData_full[:, 1000:3500]) - np.amin(trialData_full[:, 1000:3500])
+        print(str(trialindex) + " -- " + str(round(np.amin(trialData_full[:, 1000:3500]), 2)) + " - " + str(round(np.amax(trialData_full[:, 1000:3500]), 2)) + " -- " + str(round(np.average(trialData_full[:, 1000:3500]), 2)) + " -- " + str(round(curr_diff, 2)) + " -- " + str(round(respTimes[i], 2)))
 
-# Change into numpy arrays
-X = np.asarray(X)
-X_full = np.asarray(X_full)
-X_spec = np.asarray(X_spec)
-Y = np.asarray(Y)
+        X_full.append(trialData_full)
+        Y.append(respTimes[i])
 
-#X_full /= np.amax(X_full[:, :, 1250:3250])
+        # print len(trialData_full)
+        # fig = plt.figure()
+        # plt.imshow(trialData_full)
+        # plt.show()
+        # sys.exit(1)
+
+    # Change into numpy arrays
+    X_full = np.asarray(X_full)
+    Y = np.asarray(Y)
+
+# X_full /= np.amax(X_full[:, :, 1250:3250])
 
 print("")
-print(X.shape)
 print(X_full.shape)
-print(X_spec.shape)
 print(Y.shape)
 print(shifts.shape)
 print("")
@@ -339,66 +311,66 @@ print("")
 if not os.path.isdir(path_to_save):
     os.makedirs(path_to_save)
 
-contact_info, regions, [X, X_full, X_spec] = remove_regions('nan', contact_info, regions, X_values=[X, X_full, X_spec])
-
+contact_info, [X_full] = remove_regions('nan', contact_info, X_values=[X_full])
 
 range_min = 1000
 range_max = 4500
 
 for trial_index in range(X_full.shape[0]):
     curr_diff = np.amax(X_full[trial_index, :, range_min:range_max]) - np.amin(X_full[trial_index, :, range_min:range_max])
-    print(str(trial_index) + " -- " + str(round(np.amin(X_full[trial_index, :, range_min:range_max]), 2)) + " - " + str(round(np.amax(X_full[trial_index, :, range_min:range_max]), 2)) + " -- " + str(round(np.average(X_full[trial_index, :, range_min:range_max]), 2)) + " -- " + str(round(curr_diff, 2)) + " -- " + str(round(respTimes[trial_index], 2)))
-# print ""
-# for trial_index in range(X_full.shape[0]):
-#     X_full[trial_index] /= np.amax(X_full[:, :, 1250:3250])
-#     curr_diff = np.amax(X_full[trial_index, :, 1250:3250]) - np.amin(X_full[trial_index, :, 1250:3250])
-#     print str(trial_index) + " -- " + str(round(np.amin(X_full[trial_index, :, 1250:3250]), 2)) + " - " + str(round(np.amax(X_full[trial_index, :, 1250:3250]), 2)) + " -- " + str(round(np.average(X_full[trial_index, :, 1250:3250]), 2)) + " -- " + str(round(curr_diff, 2)) + " -- " + str(round(respTimes[trial_index], 2))
+    print(str(trial_index) + " -- " + str(round(np.amin(X_full[trial_index, :, range_min:range_max]), 2)) + " - " + str(round(np.amax(X_full[trial_index, :, range_min:range_max]), 2)) + " -- " + str(round(np.average(X_full[trial_index, :, range_min:range_max]), 2)) + " -- " + str(
+        round(curr_diff, 2)) + " -- " + str(round(respTimes[trial_index], 2)))
 
 X_full /= np.amax(X_full[:, :, range_min:range_max])
 Y_i, p = calculate_percentile(Y, percentile=percentile)
-#_, contact_info, [X, X_full, X_spec] = sort_by_abs_difference(X_full[:, :, 1250:3250], contact_info, Y_i, additional_X=[X, X_full, X_spec])
-_, contact_info, [X, X_full, X_spec] = sort_by_abs_difference(X_full[:, :, range_min:range_max], contact_info, Y_i, additional_X=[X, X_full, X_spec])
+# Only doing the differencing sorting on a subset of the data.
+# At this point, X_full is sorted by contacts with most change
+contact_info, [X_full] = sort_by_abs_difference(X_full[:, :, range_min:range_max], contact_info, additional_X=[X_full])
 
-pd.set_option('display.max_rows', 500)
-print(contact_info)
+# NOTE: ALL THE MAIN STUFF IS DONE AT THIS POINT. THE REST IS LIKE VISUALIZATION OR GETTING TOP REGIONS (DOING DIFFERENT APPROACH ATM)
 
-print(X_full.shape)
-print(contact_info.values.shape)
+if 1:
+    h5py_file = h5py.File(os.path.join(path_to_save, "processed_data.h5"), 'w')
+    h5py_file.create_dataset('data_full', data=X_full)
+    h5py_file.create_dataset('respTimes', data=Y)
+    h5py_file.create_dataset('shifts', data=shifts)
 
-print(contact_info['aal_label'].unique()[:5])
+    # h5py_file.attrs['electrodes'] = contact_info['electrode'].to_list()
+    h5py_file.attrs['contacts'] = contact_info['contact'].to_list()
+    h5py_file.attrs['regions'] = contact_info['aal_label'].to_list()
 
-trial_num=0
-fig, axs = plt.subplots(15, 25, sharex='all')
-for row in range(15):
-    for col in range(25):
-        axs[row, col].plot(X_full[trial_num, 0, range_min:range_max])
-        axs[row, col].tick_params(labelsize=4)
-        trial_num += 1
+    h5py_file.close()
+
+if 0:
+    trial_num = 0
+    fig, axs = plt.subplots(15, 25, sharex='all')
+    for row in range(15):
+        for col in range(25):
+            axs[row, col].plot(X_full[trial_num, 0, range_min:range_max])
+            axs[row, col].tick_params(labelsize=4)
+            trial_num += 1
+            if trial_num >= X_full.shape[0]:
+                break
         if trial_num >= X_full.shape[0]:
             break
-    if trial_num >= X_full.shape[0]:
-        break
-#plt.show()
-plt.savefig(os.path.join(path_to_save, "all_images.png"), dpi=800)
+    # plt.show()
+    plt.savefig(os.path.join(path_to_save, "all_images.png"), dpi=800)
 
+    top_regions, top_region_indices = plot_n_regions(X_full[:, :, range_min:range_max], Y_i, contact_info, path_to_save, n=num_regions)
+    plot_top10(X_full[:, :, range_min:range_max], Y_i, contact_info, path_to_save)
+    plot_responseTimes(Y, path_to_save)
 
-top_regions, top_region_indices = plot_n_regions(X_full[:, :, range_min:range_max], Y_i, contact_info, path_to_save, n=num_regions)
-plot_top10(X_full[:, :, range_min:range_max], Y_i, contact_info, path_to_save)
-plot_responseTimes(Y, path_to_save)
+    h5py_file = h5py.File(os.path.join(path_to_save, "processed_data.h5"), 'w')
+    h5py_file.create_dataset('data_full', data=X_full)
+    h5py_file.create_dataset('respTimes', data=Y)
+    h5py_file.create_dataset('shifts', data=shifts)
 
-h5py_file = h5py.File(os.path.join(path_to_save, "processed_data.h5"), 'w')
-h5py_file.create_dataset('data', data=X)
-h5py_file.create_dataset('data_full', data=X_full) # <-----
-h5py_file.create_dataset('data_spec', data=X_spec)
-h5py_file.create_dataset('respTimes', data=Y) # <-----
-h5py_file.create_dataset('shifts', data=shifts)
+    h5py_file.create_dataset('contact_info', data=contact_info.values.astype(str))
+    h5py_file.create_dataset('contact_info_headers', data=contact_info.columns.values.astype(str))
 
-h5py_file.create_dataset('contact_info', data=contact_info.values.astype(str))
-h5py_file.create_dataset('contact_info_headers', data=contact_info.columns.values.astype(str))
-
-h5py_file.create_dataset('regions', data=regions) # <-----
-h5py_file.create_dataset('num_regions', data=num_regions) # <-----
-h5py_file.create_dataset('top_regions', data=np.asarray(top_regions, dtype='str')) # <-----
-for i in range(num_regions):
-    h5py_file.create_dataset('top_region_indices_' + str(i), data=top_region_indices[i]) # <-----
-h5py_file.close()
+    h5py_file.create_dataset('regions', data=regions)  # <-----
+    h5py_file.create_dataset('num_regions', data=num_regions)  # <-----
+    h5py_file.create_dataset('top_regions', data=np.asarray(top_regions, dtype='str'))  # <-----
+    for i in range(num_regions):
+        h5py_file.create_dataset('top_region_indices_' + str(i), data=top_region_indices[i])  # <-----
+    h5py_file.close()
