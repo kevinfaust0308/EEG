@@ -21,10 +21,31 @@ def get_spectrogram(data, fs, nperseg=100, noverlap=50, fs_cap=None):
     # print(Sxx.shape)
     return f[:fs_ind], t, Sxx[:, :, :fs_ind, :]
 
+X_full1 = X_full1[:,:,100:4600]
 
 # f, t, dats = get_spectrogram(X_full1, 2048, fs_cap=100)
 
-f, t, dats = signal.spectrogram(X_full1, 2048)
+f, t, dats = signal.spectrogram(X_full1, 2048, nperseg=256, noverlap=128)
+
+plt.close('all')
+plt.plot(X_full1[0,0,:])
+plt.savefig(r'Z:\tempytempyeeg\data\SEEG-SK-04\eeg_orig.jpg', dpi=300)
+
+
+plt.close('all')
+plt.pcolormesh(t, f, dats[0,0,:,:], cmap='Greys')
+plt.ylabel('Frequency (Hz)')
+plt.xlabel('Time (s)')
+plt.savefig(r'Z:\tempytempyeeg\data\SEEG-SK-04\specto_raw.jpg', dpi=300)
+
+
+
+plt.close('all')
+plt.pcolormesh(t, f, (10 * np.log10(dats))[0,0,:,:], cmap='Greys')
+plt.ylabel('Frequency (Hz)')
+plt.xlabel('Time (s)')
+plt.savefig(r'Z:\tempytempyeeg\data\SEEG-SK-04\specto_scaled.jpg', dpi=300)
+
 
 
 # NOTE: making a spectogram plot for each of the contacts (trials are averaged)

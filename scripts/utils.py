@@ -214,12 +214,38 @@ def load_hyperparameters(results_path, run_id):
 
     return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, regions_to_use, stft_nperseg, stft_noverlap
 
+def load_hyperparameters2(results_path, run_id):
+    df = pd.read_csv(results_path)
+    row = pd.DataFrame(df.loc[df['Run ID'] == run_id])
+    row.reset_index(inplace=True)
+    percentile = row['Percentile'][0]
+    model_num = 1
+    learning_rate = row['Learning Rate'][0]
+    dropout_rate = row['Dropout Rate'][0]
+
+    # TODO: temporary:
+    # row['ES Epochs'] = row['ES Epochs'].astype(str)
+    epochs = list(map(int, row['ES Epochs'][0].split(':')))
+
+    loss = row['Loss'][0]
+    num_graphs = row['# Graphs'][0]
+    model_params = row['Model'][0].split('_')
+    contacts_to_use = row['Contacts To Use'][0].split(':')
+    L1_units = int(model_params[0][4:])
+    L2_units = int(model_params[1][2:])
+    L3_units = int(model_params[2][2:])
+    L4_units = 0
+
+    stft_nperseg, stft_noverlap = row['STFT Nperseg'][0], row['STFT Noverlap'][0]
+
+    return percentile, model_num, learning_rate, dropout_rate, epochs, loss, num_graphs, L1_units, L2_units, L3_units, L4_units, contacts_to_use, stft_nperseg, stft_noverlap
+
 
 def get_best_model(results_svr_path):
     df = pd.read_csv(results_svr_path)
     df.sort_values(by=['Accuracy 1 STDDEV'], ascending=False, inplace=True)
     run_id = int(df.iloc[0]['Run ID'])
-    # run_id = int(df.iloc[1]['Run ID'])  # TODO
+    # run_id = int(df.iloc[2]['Run ID'])  # TODO
     return run_id
 
 
@@ -501,9 +527,15 @@ def plot_gradcams(model, testData, preds, targets, step, path_to_save, xmean, xs
                 # raise Exception('On best run, type in the nperseg and noverlap params below and then comment out this exception.')
 
                 NUM_DATA_POINTS = 4500  # TODO:
-                img = signal.istft(img * xstd + xmean, 2048, nperseg=nperseg, noverlap=noverlap)[1][:, :NUM_DATA_POINTS]
+                try:
+                    img = signal.istft(img * xstd + xmean, FREQUENCY_FS_RATE, nperseg=nperseg, noverlap=noverlap)[1][:, :NUM_DATA_POINTS]
+                except:
+                    # if just 1 contact was chosen
+                    img = signal.istft(img * xstd + xmean, FREQUENCY_FS_RATE, nperseg=nperseg, noverlap=noverlap)[1][:NUM_DATA_POINTS]
+                    img = np.expand_dims(img, axis=0)
+
                 # NOTE: scaling or not scaling results in same shape. and then when we scale 0-1, they will be indentical
-                attn_map_inverted = signal.istft(attn_map * xstd + xmean, 2048, nperseg=nperseg, noverlap=noverlap)[1][:, :NUM_DATA_POINTS]
+                attn_map_inverted = signal.istft(attn_map * xstd + xmean, FREQUENCY_FS_RATE, nperseg=nperseg, noverlap=noverlap)[1][:, :NUM_DATA_POINTS]
 
                 attn_map_inverted = MinMaxScaler().fit_transform(attn_map_inverted.T).T
 
@@ -665,8 +697,12 @@ def select_regions(num_regions, max_regions_limit, top_regions, top_region_indic
     return data, regions_to_use, num_graphs, region_nums_to_use, indices_to_use
 
 
-def select_contacts2(data, contacts, regions, top_x_contacts=20, max_contact_limit=5):
-    indices_to_use = np.random.choice(np.arange(top_x_contacts), size=np.random.randint(1, max_contact_limit + 1), replace=False)
+def select_contacts2(data, contacts, regions, top_x_contacts=20, max_contact_limit=5, indices_to_use=None):
+    if indices_to_use is None:
+        indices_to_use = np.random.choice(np.arange(top_x_contacts), size=np.random.randint(1, max_contact_limit + 1), replace=False)
+    else:
+        # already being passed in. ie when we are on final run and we know which contacts to use
+        pass
 
     # names
     contacts_to_use = ':'.join(contacts[indices_to_use].tolist())
